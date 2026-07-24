@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>kWcl — Korea World Class · Alliance HQ</title>
+<meta name="description" content="Headquarters of kWcl (Korea World Class), a Last War: Survival alliance. Member power tracking, growth trajectories and comparisons.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%230d0d0d'/><path d='M20 62 L38 30 L50 50 L62 30 L80 62' stroke='%23cd2e3a' stroke-width='9' fill='none' stroke-linecap='round' stroke-linejoin='round'/><rect x='20' y='72' width='60' height='8' rx='4' fill='%233069c9'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Noto+Sans+KR:wght@400;500;700&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">kWcl</span>
+    <span class="brand-sub">코리아 월드 클래스 · KOREA WORLD CLASS</span>
+  </div>
+  <div class="topbar-right">
+    <span class="data-pill" id="dataPill" title="Data source">…</span>
+    <button class="btn-ghost" id="settingsBtn" aria-haspopup="dialog">⚙ Data source</button>
+  </div>
+</header>
+
+<div class="banner hidden" id="demoBanner">
+  <strong>Demo data.</strong> This is sample data so you can see the page working.
+  <button class="link-btn" id="bannerConnect">Connect your alliance API</button> to show real kWcl numbers.
+</div>
+
+<div class="banner banner-error hidden" id="errorBanner"></div>
+
+<main id="app" aria-busy="true">
+
+  <!-- HERO / SITUATION BOARD -->
+  <section class="hero" id="hero">
+    <p class="eyebrow">상황판 · SITUATION BOARD</p>
+    <h1 class="hero-title">Alliance Headquarters</h1>
+    <p class="hero-note" id="heroNote">Loading snapshots…</p>
+
+    <div class="stat-row" id="heroStats"></div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>연맹 전투력 · <span>Alliance total power</span></h2>
+        <div class="seg-tabs" id="allianceRange" role="tablist" aria-label="Time range"></div>
+      </div>
+      <div class="chart" id="allianceChart"></div>
+    </div>
+  </section>
+
+  <!-- MOVERS -->
+  <section class="section" id="movers">
+    <div class="section-head">
+      <h2 class="section-title">전력 변동 · <span>Movers</span></h2>
+      <div class="seg-tabs" id="moversRange" role="tablist" aria-label="Movers window"></div>
+    </div>
+    <div class="movers-grid">
+      <div class="panel">
+        <h3 class="panel-label up">▲ Top gainers</h3>
+        <div id="gainersList" class="bar-list"></div>
+      </div>
+      <div class="panel">
+        <h3 class="panel-label down">▼ Declining</h3>
+        <div id="losersList" class="bar-list"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- LEADERBOARD -->
+  <section class="section" id="leaderboard">
+    <div class="section-head">
+      <h2 class="section-title">서열표 · <span>Roster</span></h2>
+      <input type="search" id="rosterSearch" class="search" placeholder="Search commander…" aria-label="Search commander">
+    </div>
+    <div class="table-wrap panel">
+      <table class="roster" id="rosterTable">
+        <thead>
+          <tr>
+            <th class="num">Rank</th>
+            <th>Commander</th>
+            <th>Tier</th>
+            <th class="num">Power</th>
+            <th class="num">Δ 24h</th>
+            <th class="num">Δ 7d</th>
+            <th>Trend</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="hint">Click any commander for their dossier.</p>
+  </section>
+
+  <!-- COMMANDER DOSSIER -->
+  <section class="section" id="dossier">
+    <div class="section-head">
+      <h2 class="section-title">지휘관 기록 · <span>Commander dossier</span></h2>
+      <select id="dossierSelect" class="select" aria-label="Choose commander"></select>
+    </div>
+    <div id="dossierBody"></div>
+  </section>
+
+  <!-- COMPARE -->
+  <section class="section" id="compare">
+    <div class="section-head">
+      <h2 class="section-title">비교 분석 · <span>Compare commanders</span></h2>
+      <div class="seg-tabs" id="compareMode" role="tablist" aria-label="Compare mode"></div>
+    </div>
+    <div class="panel">
+      <div class="compare-picker">
+        <div class="chips" id="compareChips"></div>
+        <div class="picker-row">
+          <input type="search" id="compareSearch" class="search" placeholder="Add commander (max 6)…" aria-label="Add commander to comparison" list="memberList">
+          <datalist id="memberList"></datalist>
+          <button class="btn-ghost" id="compareAdd">Add</button>
+        </div>
+      </div>
+      <div class="legend" id="compareLegend"></div>
+      <div class="chart" id="compareChart"></div>
+      <p class="hint" id="compareHint"></p>
+    </div>
+  </section>
+
+  <!-- TIERS -->
+  <section class="section" id="tiers">
+    <div class="section-head">
+      <h2 class="section-title">계급 구성 · <span>Tier breakdown</span></h2>
+    </div>
+    <div class="panel">
+      <div class="tier-bar" id="tierBar" role="img" aria-label="Share of alliance power by tier"></div>
+      <div class="legend" id="tierLegend"></div>
+      <div class="table-wrap">
+        <table class="roster tier-table" id="tierTable">
+          <thead>
+            <tr><th>Tier</th><th class="num">Members</th><th class="num">Total power</th><th class="num">Avg power</th><th class="num">Share</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <div>
+    <span class="brand-mark small">kWcl</span>
+    <span class="footer-sub">Korea World Class — Last War: Survival alliance headquarters.</span>
+  </div>
+  <div class="footer-links">
+    <button class="link-btn" id="footerSettings">Data source settings</button>
+    <a href="https://github.com/pskill9/kwcl" rel="noopener">GitHub</a>
+  </div>
+</footer>
+
+<!-- SETTINGS DIALOG -->
+<dialog id="settingsDialog" class="settings">
+  <form method="dialog">
+    <h2>Data source</h2>
+    <p class="settings-note">
+      Paste the Google Apps Script <strong>Web app URL</strong> (looks like
+      <code>https://script.google.com/macros/s/…/exec</code>). It's saved in this
+      browser only. Until then the page shows demo data.
+    </p>
+    <label class="field">
+      <span>API URL</span>
+      <input type="url" id="apiInput" placeholder="https://script.google.com/macros/s/DEPLOY_ID/exec" spellcheck="false">
+    </label>
+    <p class="settings-status" id="settingsStatus"></p>
+    <div class="settings-actions">
+      <button type="button" class="btn-primary" id="testSaveBtn">Test & save</button>
+      <button type="button" class="btn-ghost" id="useDemoBtn">Use demo data</button>
+      <button value="cancel" class="btn-ghost">Close</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="chart-tip hidden" id="chartTip" role="status"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
