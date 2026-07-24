@@ -11,28 +11,54 @@ API and shows:
 - **Compare** — overlay up to 6 commanders, absolute power or indexed growth %
 - **Tier breakdown** — power share and averages by R1–R5
 
-No build step, no dependencies — `index.html` + `styles.css` + `app.js`.
+No build step, no dependencies — `index.html` + `styles.css` + `app.js` +
+`config.js`.
+
+## Use it for your own alliance
+
+Everything alliance-specific lives in **[`config.js`](config.js)**. Fork this
+repo, edit that one file, enable GitHub Pages — done:
+
+```js
+window.ALLIANCE_CONFIG = {
+  name: "MyAlly",                    // short tag shown in the header
+  fullName: "My Alliance",
+  localName: "우리 연맹",             // optional native-language name
+  game: "Last War: Survival",
+  apiUrl: "https://script.google.com/macros/s/YOUR_ID/exec",
+  icon: "assets/crest.png",          // your crest, or null to hide
+  theme: { accentA: "#cd2e3a", accentB: "#3069c9" },  // section rule colors
+  charter: { lead, rules: [{label, value, note}], join },  // or null to hide
+  footerMotto: "…",
+  strings: { /* heading translations, see below */ },
+};
+```
+
+**Languages.** Every heading has a built-in English label. To localize one,
+add its key to `strings` — either a plain string, or a pair that renders as
+"native · ENGLISH":
+
+```js
+strings: {
+  roster: { local: "서열표", en: "Roster" },   // → 서열표 · ROSTER
+  movers: "Bewegungen",                        // → plain replacement
+  // any key you omit stays English
+}
+```
+
+The full key list is in the comment at the bottom of `config.js` and in
+`STR_EN` in `app.js`.
 
 ## Connecting the data
-
-The page ships with **demo data** so it renders immediately. To show real
-alliance data:
 
 1. Deploy the Google Apps Script as a **Web app** (Deploy → New deployment →
    Web app, *Execute as: Me*, *Who has access: **Anyone***). Copy the URL that
    looks like `https://script.google.com/macros/s/DEPLOY_ID/exec`.
-2. On the site, click **⚙ Data source**, paste the URL, hit **Test & save**.
-   The URL is stored in that browser's localStorage.
+2. Put it in `config.js` as `apiUrl`.
 
-To bake the URL in for everyone (recommended once deployed), set it in
-[`app.js`](app.js) instead:
-
-```js
-const DEFAULT_API_URL = "https://script.google.com/macros/s/DEPLOY_ID/exec";
-```
-
-You can also pass it once via query string: `https://…/kwcl/?api=<web app url>`
-(it gets saved to localStorage).
+Without a working `apiUrl` the page shows built-in demo data. Admins can also
+override the URL per-browser at `https://…/?setup`, or pass
+`?api=<web app url>` once (saved to localStorage).
 
 ### API contract
 

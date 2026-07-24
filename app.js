@@ -6,12 +6,78 @@
 "use strict";
 
 /* ------------------------------------------------------------
-   CONFIG
-   ------------------------------------------------------------
-   Once the Apps Script Web app is deployed, either:
-   1. paste its URL in the ⚙ Data source panel on the page, or
-   2. hardcode it here:                                        */
-const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbyhvx9p6pVgfIuYxsk3xUQmBtsvZccq00EEClHM93HHBaXdg2nVPGB_0NKnCEG0Il2Q/exec";
+   CONFIG — alliance identity lives in config.js (edit that file,
+   not this one). CFG falls back to a bare default so the page
+   still renders if config.js is missing.                       */
+const CFG = Object.assign(
+  { name: "Alliance", fullName: "", localName: "", game: "Last War: Survival",
+    apiUrl: "", icon: null, theme: null, charter: null, footerMotto: "", strings: {} },
+  window.ALLIANCE_CONFIG || {}
+);
+
+/* Built-in English labels. config.js strings override any of these —
+   as "Plain text" or as { local: "현지어", en: "English" }. */
+const STR_EN = {
+  situationBoard: "Situation board",
+  heroTitle: "Alliance Headquarters",
+  allianceChart: "Alliance total power",
+  statTotalPower: "Total power",
+  statGrowth7d: "7-day growth",
+  statCommanders: "Commanders",
+  statAvgPower: "Avg power",
+  charter: "Alliance charter",
+  movers: "Movers",
+  topGainers: "Top gainers",
+  declining: "Declining",
+  roster: "Roster",
+  dossier: "Commander dossier",
+  powerOverTime: "Power over time",
+  rankOverTime: "Rank over time (1 = top)",
+  compare: "Compare commanders",
+  tiers: "Tier breakdown",
+  thRank: "Rank", thCommander: "Commander", thTier: "Tier", thPower: "Power",
+  th24h: "Δ 24h", th7d: "Δ 7d", thTrend: "Trend",
+  thMembers: "Members", thTotalPower: "Total power", thAvgPower: "Avg power", thShare: "Share",
+  searchPlaceholder: "Search commander…",
+  addCommander: "Add commander (max 6)…",
+  addBtn: "Add",
+  rosterHint: "Click any commander for their dossier.",
+  modePower: "Power", modeIndexed: "Indexed %",
+  compareHintPower: "Absolute power. Switch to Indexed % to compare growth rates fairly.",
+  compareHintIndexed: "Indexed: growth since each commander's first snapshot — fair comparison across different power levels.",
+  noGains: "No gains in this window yet.",
+  noDeclines: "Nobody declined — clean sheet.",
+  needTwo: "Need at least two daily snapshots to draw a trend — check back tomorrow.",
+  factRank: "Current rank", factBestRank: "Best rank", factPower: "Power",
+  factGrowth7d: "7-day growth", factTotalGrowth: "Total growth", factAvgDay: "Avg / day",
+  factFirstSeen: "First seen", factSnapshots: "Snapshots",
+};
+
+/* STR(key) → English string (for plain-text spots).
+   STRPAIR(key) → { local?, en } (for two-part headings). */
+function STRPAIR(key) {
+  const v = CFG.strings[key];
+  if (v == null) return { en: STR_EN[key] || key };
+  if (typeof v === "string") return { en: v };
+  return { local: v.local, en: v.en || STR_EN[key] || key };
+}
+function STR(key) {
+  const p = STRPAIR(key);
+  return p.local ? p.local + " · " + p.en : p.en;
+}
+/* Fill a section-title / panel h2: "현지어 · <span>English</span>" or plain English. */
+function setTitle(node, key) {
+  const p = STRPAIR(key);
+  node.innerHTML = "";
+  if (p.local) {
+    node.appendChild(document.createTextNode(p.local + " · "));
+    const sp = document.createElement("span");
+    sp.textContent = p.en;
+    node.appendChild(sp);
+  } else {
+    node.textContent = p.en;
+  }
+}
 
 const MAX_SNAPSHOTS = 120;   // most recent daily sheets to load
 const FETCH_CONCURRENCY = 6;
@@ -95,17 +161,22 @@ async function pool(items, n, fn) {
 function getApiUrl() {
   const p = new URLSearchParams(location.search).get("api");
   if (p) { try { localStorage.setItem(API_KEY, p); } catch (_) {} return p; }
-  try { return localStorage.getItem(API_KEY) || DEFAULT_API_URL; } catch (_) { return DEFAULT_API_URL; }
+  try { return localStorage.getItem(API_KEY) || CFG.apiUrl; } catch (_) { return CFG.apiUrl; }
 }
 
-async function fetchJson(url, timeoutMs = 25000) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { signal: ctrl.signal, redirect: "follow" });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    return await res.json();
-  } finally { clearTimeout(t); }
+async function fetchJson(url, timeoutMs = 30000, retries = 1) {
+  for (let attempt = 0; ; attempt++) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { signal: ctrl.signal, redirect: "follow" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return await res.json();
+    } catch (e) {
+      // Apps Script occasionally hangs on cold starts — retry once
+      if (attempt >= retries) throw e;
+    } finally { clearTimeout(t); }
+  }
 }
 
 function readCache() {
@@ -274,7 +345,7 @@ function lineChart(container, opts) {
   const ds = dates.slice(startIdx);
   const sr = series.map((s) => ({ ...s, values: s.values.slice(startIdx) }));
   if (ds.length < 2) {
-    container.appendChild(el("div", "chart-empty", "Need at least two daily snapshots to draw a trend — check back tomorrow."));
+    container.appendChild(el("div", "chart-empty", STR("needTwo")));
     return;
   }
 
@@ -448,10 +519,10 @@ function renderHero() {
     `Latest snapshot ${dates[last]} · ${dates.length} daily snapshots on record (${dates[0]} → ${dates[last]})`;
 
   const stats = [
-    { label: "총 전투력 · Total power", value: fmtPower(cur.total), delta: d1, deltaLabel: "24h" },
-    { label: "7일 성장 · 7-day growth", value: d7 ? fmtSigned(d7.abs) : "—", delta: d7, deltaLabel: "", pctOnly: true },
-    { label: "지휘관 · Commanders", value: String(cur.count), delta: null },
-    { label: "평균 전투력 · Avg power", value: fmtPower(cur.count ? cur.total / cur.count : null), delta: null },
+    { label: STR("statTotalPower"), value: fmtPower(cur.total), delta: d1, deltaLabel: "24h" },
+    { label: STR("statGrowth7d"), value: d7 ? fmtSigned(d7.abs) : "—", delta: d7, deltaLabel: "", pctOnly: true },
+    { label: STR("statCommanders"), value: String(cur.count), delta: null },
+    { label: STR("statAvgPower"), value: fmtPower(cur.count ? cur.total / cur.count : null), delta: null },
   ];
   const row = $("#heroStats");
   row.innerHTML = "";
@@ -501,7 +572,7 @@ function renderMovers() {
 
   const paint = (listEl, items, dir) => {
     listEl.innerHTML = "";
-    if (!items.length) { listEl.appendChild(el("div", "empty", dir === "up" ? "No gains in this window yet." : "Nobody declined — clean sheet.")); return; }
+    if (!items.length) { listEl.appendChild(el("div", "empty", dir === "up" ? STR("noGains") : STR("noDeclines"))); return; }
     for (const { m, d } of items) {
       const btn = el("button", "bar-row");
       btn.type = "button";
@@ -598,27 +669,29 @@ function renderDossier() {
     f.appendChild(el("div", "value" + (cls ? " delta-val " + cls : ""), value));
     return f;
   };
-  facts.appendChild(fact("Current rank", "#" + m.latestRank));
-  facts.appendChild(fact("Best rank", "#" + m.bestRank));
-  facts.appendChild(fact("Power", fmtPower(m.latestPower)));
-  facts.appendChild(fact("7-day growth", d7 ? `${fmtSigned(d7.abs)} (${fmtPct(d7.pct)})` : "—", d7 ? deltaClass(d7.abs) : null));
-  facts.appendChild(fact("Total growth", dTotal ? fmtSigned(dTotal.abs) : "—", dTotal ? deltaClass(dTotal.abs) : null));
-  facts.appendChild(fact("Avg / day", dailyAvg != null ? fmtSigned(dailyAvg) : "—"));
-  facts.appendChild(fact("First seen", state.dates[m.firstIdx]));
-  facts.appendChild(fact("Snapshots", String(m.power.filter((v) => v != null).length)));
+  facts.appendChild(fact(STR("factRank"), "#" + m.latestRank));
+  facts.appendChild(fact(STR("factBestRank"), "#" + m.bestRank));
+  facts.appendChild(fact(STR("factPower"), fmtPower(m.latestPower)));
+  facts.appendChild(fact(STR("factGrowth7d"), d7 ? `${fmtSigned(d7.abs)} (${fmtPct(d7.pct)})` : "—", d7 ? deltaClass(d7.abs) : null));
+  facts.appendChild(fact(STR("factTotalGrowth"), dTotal ? fmtSigned(dTotal.abs) : "—", dTotal ? deltaClass(dTotal.abs) : null));
+  facts.appendChild(fact(STR("factAvgDay"), dailyAvg != null ? fmtSigned(dailyAvg) : "—"));
+  facts.appendChild(fact(STR("factFirstSeen"), state.dates[m.firstIdx]));
+  facts.appendChild(fact(STR("factSnapshots"), String(m.power.filter((v) => v != null).length)));
   card.appendChild(facts);
   grid.appendChild(card);
 
   const charts = el("div", "dossier-charts");
 
   const p1 = el("div", "panel");
-  const h1 = el("div", "panel-head"); h1.appendChild(el("h2", null, "전투력 추이 · Power over time"));
+  const h1 = el("div", "panel-head");
+  const t1 = el("h2"); setTitle(t1, "powerOverTime"); h1.appendChild(t1);
   p1.appendChild(h1);
   const c1 = el("div", "chart"); p1.appendChild(c1);
   charts.appendChild(p1);
 
   const p2 = el("div", "panel");
-  const h2 = el("div", "panel-head"); h2.appendChild(el("h2", null, "서열 추이 · Rank over time (1 = top)"));
+  const h2 = el("div", "panel-head");
+  const t2 = el("h2"); setTitle(t2, "rankOverTime"); h2.appendChild(t2);
   p2.appendChild(h2);
   const c2 = el("div", "chart"); p2.appendChild(c2);
   charts.appendChild(p2);
@@ -640,8 +713,9 @@ function renderDossier() {
 }
 
 function renderCompare() {
-  segTabs($("#compareMode"), ["Power", "Indexed %"], state.compareMode === "power" ? "Power" : "Indexed %",
-    (o) => { state.compareMode = o === "Power" ? "power" : "indexed"; renderCompare(); });
+  const mPower = STR("modePower"), mIndexed = STR("modeIndexed");
+  segTabs($("#compareMode"), [mPower, mIndexed], state.compareMode === "power" ? mPower : mIndexed,
+    (o) => { state.compareMode = o === mPower ? "power" : "indexed"; renderCompare(); });
 
   // default picks: top 3 by rank
   if (!state.compare.length) {
@@ -702,9 +776,7 @@ function renderCompare() {
     tipFmt: indexed ? (v) => (v > 0 ? "+" : "") + v.toFixed(2) + "%" : fmtPower,
   });
 
-  $("#compareHint").textContent = indexed
-    ? "Indexed: growth since each commander's first snapshot — fair comparison across different power levels."
-    : "Absolute power. Switch to Indexed % to compare growth rates fairly.";
+  $("#compareHint").textContent = indexed ? STR("compareHintIndexed") : STR("compareHintPower");
 }
 
 function addCompare(name) {
@@ -838,8 +910,78 @@ function wireSettings() {
   });
 }
 
+/* ------------------------------------------------------------ apply config */
+function applyConfig() {
+  // identity
+  document.title = `${CFG.name}${CFG.fullName ? " — " + CFG.fullName : ""} · Alliance HQ`;
+  $("#brandMark").textContent = CFG.name;
+  $("#footerBrand").textContent = CFG.name;
+  $("#brandSub").textContent = [CFG.localName, CFG.fullName].filter(Boolean).join(" · ");
+  $("#footerTagline").textContent =
+    `${CFG.fullName || CFG.name} — ${CFG.game} alliance headquarters.`;
+  $("#footerMotto").textContent = CFG.footerMotto || "";
+
+  // theme accents
+  if (CFG.theme) {
+    const root = document.documentElement.style;
+    if (CFG.theme.accentA) root.setProperty("--taegeuk-red", CFG.theme.accentA);
+    if (CFG.theme.accentB) root.setProperty("--taegeuk-blue", CFG.theme.accentB);
+  }
+
+  // crest + favicon
+  if (CFG.icon) {
+    const img = $("#crestImg");
+    img.src = CFG.icon;
+    img.alt = CFG.name + " alliance crest";
+    img.classList.remove("hidden");
+    $("#favicon").href = CFG.icon;
+  }
+
+  // headings
+  $("#heroEyebrow").textContent = STR("situationBoard");
+  $("#heroTitle").textContent = STRPAIR("heroTitle").local
+    ? STR("heroTitle") : STRPAIR("heroTitle").en;
+  setTitle($("#allianceChartTitle"), "allianceChart");
+  setTitle($("#moversTitle"), "movers");
+  setTitle($("#rosterTitle"), "roster");
+  setTitle($("#dossierTitle"), "dossier");
+  setTitle($("#compareTitle"), "compare");
+  setTitle($("#tiersTitle"), "tiers");
+  $("#gainersLabel").textContent = "▲ " + STR("topGainers");
+  $("#losersLabel").textContent = "▼ " + STR("declining");
+
+  // table headers & inputs & hints
+  document.querySelectorAll("[data-str]").forEach((n) => { n.textContent = STR(n.dataset.str); });
+  $("#rosterSearch").placeholder = STR("searchPlaceholder");
+  $("#compareSearch").placeholder = STR("addCommander");
+  $("#compareAdd").textContent = STR("addBtn");
+  $("#rosterHint").textContent = STR("rosterHint");
+
+  // charter
+  if (CFG.charter) {
+    setTitle($("#charterTitle"), "charter");
+    const body = $("#charterBody");
+    body.innerHTML = "";
+    if (CFG.charter.lead) body.appendChild(el("p", "charter-lead", CFG.charter.lead));
+    if (CFG.charter.rules && CFG.charter.rules.length) {
+      const grid = el("div", "charter-grid");
+      for (const r of CFG.charter.rules) {
+        const card = el("div", "rule");
+        card.appendChild(el("div", "rule-label", r.label || ""));
+        card.appendChild(el("div", "rule-value", r.value || ""));
+        if (r.note) card.appendChild(el("div", "rule-note", r.note));
+        grid.appendChild(card);
+      }
+      body.appendChild(grid);
+    }
+    if (CFG.charter.join) body.appendChild(el("p", "charter-join", CFG.charter.join));
+    $("#charter").classList.remove("hidden");
+  }
+}
+
 /* ------------------------------------------------------------ boot */
 async function boot() {
+  applyConfig();
   wireSettings();
   $("#rosterSearch").addEventListener("input", (e) => renderRoster(e.target.value));
   $("#dossierSelect").addEventListener("change", (e) => { state.dossierName = e.target.value; renderDossier(); });
