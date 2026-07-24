@@ -808,9 +808,9 @@ function wireSettings() {
     $("#settingsStatus").className = "settings-status";
     dlg.showModal();
   };
-  $("#settingsBtn").addEventListener("click", openDlg);
-  $("#footerSettings").addEventListener("click", openDlg);
-  $("#bannerConnect").addEventListener("click", openDlg);
+  // Admin-only: the settings panel is hidden from the UI.
+  // Open it by appending ?setup to the URL.
+  if (new URLSearchParams(location.search).has("setup")) openDlg();
 
   $("#testSaveBtn").addEventListener("click", async () => {
     const url = $("#apiInput").value.trim().replace(/\/+$/, "");

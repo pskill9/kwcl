@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>kWcl — Korea World Class · Alliance HQ</title>
 <meta name="description" content="Headquarters of kWcl (Korea World Class), a Last War: Survival alliance. Member power tracking, growth trajectories and comparisons.">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%230d0d0d'/><path d='M20 62 L38 30 L50 50 L62 30 L80 62' stroke='%23cd2e3a' stroke-width='9' fill='none' stroke-linecap='round' stroke-linejoin='round'/><rect x='20' y='72' width='60' height='8' rx='4' fill='%233069c9'/></svg>">
+<link rel="icon" href="assets/crest.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Noto+Sans+KR:wght@400;500;700&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
@@ -19,14 +19,12 @@
     <span class="brand-sub">코리아 월드 클래스 · KOREA WORLD CLASS</span>
   </div>
   <div class="topbar-right">
-    <span class="data-pill" id="dataPill" title="Data source">…</span>
-    <button class="btn-ghost" id="settingsBtn" aria-haspopup="dialog">⚙ Data source</button>
+    <span class="data-pill" id="dataPill" title="Data status">…</span>
   </div>
 </header>
 
 <div class="banner hidden" id="demoBanner">
-  <strong>Demo data.</strong> This is sample data so you can see the page working.
-  <button class="link-btn" id="bannerConnect">Connect your alliance API</button> to show real kWcl numbers.
+  <strong>Demo data.</strong> Live alliance data is temporarily unavailable — showing sample numbers.
 </div>
 
 <div class="banner banner-error hidden" id="errorBanner"></div>
@@ -35,9 +33,14 @@
 
   <!-- HERO / SITUATION BOARD -->
   <section class="hero" id="hero">
-    <p class="eyebrow">상황판 · SITUATION BOARD</p>
-    <h1 class="hero-title">Alliance Headquarters</h1>
-    <p class="hero-note" id="heroNote">Loading snapshots…</p>
+    <div class="hero-head">
+      <img class="crest" src="assets/crest.png" alt="kWcl alliance crest" width="92" height="87">
+      <div>
+        <p class="eyebrow">상황판 · SITUATION BOARD</p>
+        <h1 class="hero-title">Alliance Headquarters</h1>
+        <p class="hero-note" id="heroNote">Loading snapshots…</p>
+      </div>
+    </div>
 
     <div class="stat-row" id="heroStats"></div>
 
@@ -47,6 +50,44 @@
         <div class="seg-tabs" id="allianceRange" role="tablist" aria-label="Time range"></div>
       </div>
       <div class="chart" id="allianceChart"></div>
+    </div>
+  </section>
+
+  <!-- CHARTER -->
+  <section class="section" id="charter">
+    <div class="section-head">
+      <h2 class="section-title">연맹 강령 · <span>Alliance charter</span></h2>
+    </div>
+    <div class="panel charter">
+      <p class="charter-lead">We move forward in step with all team members.
+      Please enjoy the game with good manners and an altruistic attitude.</p>
+      <div class="charter-grid">
+        <div class="rule">
+          <div class="rule-label">일일 VS · Daily VS points</div>
+          <div class="rule-value">7.2M</div>
+          <div class="rule-note">every day, mandatory</div>
+        </div>
+        <div class="rule">
+          <div class="rule-label">연맹 기부 · Alliance donation</div>
+          <div class="rule-value">Mandatory</div>
+        </div>
+        <div class="rule">
+          <div class="rule-label">집결 이동 · Gathering point</div>
+          <div class="rule-value">Mandatory</div>
+          <div class="rule-note">move when called</div>
+        </div>
+        <div class="rule">
+          <div class="rule-label">접속 · Activity</div>
+          <div class="rule-value">Daily login</div>
+          <div class="rule-note">long-term members only</div>
+        </div>
+        <div class="rule">
+          <div class="rule-label">협정 · Non-aggression</div>
+          <div class="rule-value">2254 NAP-20</div>
+        </div>
+      </div>
+      <p class="charter-join">가입 문의 · <strong>To join:</strong> contact the recruiter or any R4.
+      Please only apply if you can log in every day and intend to stay with us for a long time.</p>
     </div>
   </section>
 
@@ -150,8 +191,7 @@
     <span class="footer-sub">Korea World Class — Last War: Survival alliance headquarters.</span>
   </div>
   <div class="footer-links">
-    <button class="link-btn" id="footerSettings">Data source settings</button>
-    <a href="https://github.com/pskill9/kwcl" rel="noopener">GitHub</a>
+    <span>2254 NAP-20 · 함께 전진 · We move forward together</span>
   </div>
 </footer>
 
