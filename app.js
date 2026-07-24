@@ -11,7 +11,7 @@
    Once the Apps Script Web app is deployed, either:
    1. paste its URL in the ⚙ Data source panel on the page, or
    2. hardcode it here:                                        */
-const DEFAULT_API_URL = ""; // e.g. "https://script.google.com/macros/s/DEPLOY_ID/exec"
+const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbyhvx9p6pVgfIuYxsk3xUQmBtsvZccq00EEClHM93HHBaXdg2nVPGB_0NKnCEG0Il2Q/exec";
 
 const MAX_SNAPSHOTS = 120;   // most recent daily sheets to load
 const FETCH_CONCURRENCY = 6;
