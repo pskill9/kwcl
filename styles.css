@@ -88,6 +88,18 @@ a:hover { color: var(--ink); }
 .data-pill.live  { color: var(--good);  border-color: rgba(12,163,12,0.4); }
 .data-pill.demo  { color: var(--s4);    border-color: rgba(201,133,0,0.4); }
 
+.refresh-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0; font-size: 15px; line-height: 1;
+  border-radius: 999px; border: 1px solid var(--ring);
+  color: var(--ink-mute); background: var(--surface);
+  cursor: pointer; transition: color .15s, border-color .15s;
+}
+.refresh-btn:hover  { color: var(--ink); border-color: var(--ink-mute); }
+.refresh-btn:focus-visible { outline: 2px solid var(--s2); outline-offset: 2px; }
+.refresh-btn.spinning { animation: refresh-spin .7s linear infinite; }
+@keyframes refresh-spin { to { transform: rotate(360deg); } }
+
 /* ---------- banners ---------- */
 .banner {
   max-width: var(--maxw); margin: 10px auto 0; padding: 10px 16px;

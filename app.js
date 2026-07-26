@@ -81,7 +81,10 @@ function setTitle(node, key) {
 
 const MAX_SNAPSHOTS = 120;   // most recent daily sheets to load
 const FETCH_CONCURRENCY = 6;
-const CACHE_KEY = "kwcl_cache_v1";
+// Bump this whenever past snapshots are edited in the sheet (e.g. commander
+// names corrected). Historical days are served from cache and never refetched,
+// so a new key is what forces every visitor to pick the corrections up.
+const CACHE_KEY = "kwcl_cache_v2";
 const API_KEY = "kwcl_api_url";
 const COMPARE_MAX = 6;
 
@@ -860,6 +863,19 @@ function setSourceUI() {
   }
 }
 
+/* Past days are cached and never refetched, so corrections made to an older
+   sheet stay invisible until the cache is dropped. This is the manual escape
+   hatch; the API URL is left untouched. */
+function wireRefresh() {
+  const btn = $("#refreshBtn");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    try { localStorage.removeItem(CACHE_KEY); } catch (_) { /* private mode */ }
+    btn.classList.add("spinning");
+    location.reload();
+  });
+}
+
 function showError(msg) {
   const b = $("#errorBanner");
   b.innerHTML = "";
@@ -983,6 +999,7 @@ function applyConfig() {
 async function boot() {
   applyConfig();
   wireSettings();
+  wireRefresh();
   $("#rosterSearch").addEventListener("input", (e) => renderRoster(e.target.value));
   $("#dossierSelect").addEventListener("change", (e) => { state.dossierName = e.target.value; renderDossier(); });
   $("#compareAdd").addEventListener("click", () => addCompare($("#compareSearch").value));
