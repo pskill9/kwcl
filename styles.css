@@ -302,6 +302,17 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 0 20px 40px; }
 .roster tbody tr:hover { background: var(--surface-2); }
 .roster td.num, .roster th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .roster .name { color: var(--ink); font-weight: 500; }
+.who-cell { display: flex; align-items: center; gap: 9px; }
+
+/* ---------- avatars ---------- */
+.avatar {
+  display: block; flex: none; border-radius: 5px; object-fit: cover;
+  border: 1px solid var(--ring); background: var(--surface-2);
+}
+.roster tbody tr:hover .avatar { border-color: var(--baseline); }
+.dossier-id { display: flex; align-items: center; gap: 12px; }
+.dossier-id .avatar { border-radius: 7px; }
+.dossier-id .big-name { margin: 0 0 5px; }
 .roster .power { font-family: var(--font-num); font-weight: 700; font-size: 15px; color: var(--ink); }
 .tier-table tbody tr { cursor: default; }
 

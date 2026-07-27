@@ -336,6 +336,120 @@ function seriesDelta(values, fromIdx) {
 
 const WINDOWS = { "1D": 1, "7D": 7, "30D": 30, "ALL": Infinity };
 
+/* ------------------------------------------------------------ avatars
+   Commander portraits cropped from the in-game ranking live in
+   assets/commanders/, keyed by name in index.json. Anyone missing — a joiner
+   who arrived since the last crop run, or an alliance that never ran it —
+   gets an identity plate generated here instead of a blank square. It is
+   drawn rather than fetched so a new name works the moment it appears in the
+   data, and so the browser's own text shaping handles Korean, Arabic and
+   decorated Latin, which a server-side renderer gets wrong. */
+const AVATARS = {};
+
+async function loadAvatarIndex() {
+  try {
+    const res = await fetch("assets/commanders/index.json", { cache: "no-cache" });
+    if (res.ok) Object.assign(AVATARS, await res.json());
+  } catch (_) { /* no index — everyone gets a generated plate */ }
+}
+
+/* First glyph(s) of a name: two for Latin/digits, one for scripts whose
+   glyphs are wide (Korean, CJK, Arabic). Skips leading punctuation and
+   splits by grapheme so a decorated character is never cut in half. */
+function monogram(name) {
+  const chars = typeof Intl !== "undefined" && Intl.Segmenter
+    ? [...new Intl.Segmenter().segment(name)].map((s) => s.segment)
+    : Array.from(name);
+  const letters = chars.filter((c) => /[\p{L}\p{N}]/u.test(c));
+  if (!letters.length) return CFG.name.slice(0, 2).toUpperCase();
+  // Latin covers ı, ö, Â etc. — narrow glyphs, so two of them read better than one
+  const narrow = (c) => /[\p{Script=Latin}\p{Nd}]/u.test(c);
+  const first = letters[0];
+  if (narrow(first)) {
+    const second = letters[1] && narrow(letters[1]) ? letters[1] : "";
+    return (first + second).toLocaleUpperCase();
+  }
+  return first;
+}
+
+function hashCode(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+/* Generated identity plate: stencilled monogram, alliance tag, a deterministic
+   accent so a commander keeps the same colour everywhere on the page. */
+function avatarPlate(name, size) {
+  const NS = "http://www.w3.org/2000/svg";
+  const accent = SERIES[hashCode(name) % SERIES.length];
+  const uid = "pl" + hashCode(name).toString(36);
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", "0 0 96 96");
+  svg.setAttribute("width", size);
+  svg.setAttribute("height", size);
+  svg.setAttribute("class", "avatar avatar-plate");
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", name);
+  const S = (tag, attrs, parent) => {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    (parent || svg).appendChild(n);
+    return n;
+  };
+
+  const defs = S("defs", {});
+  const grad = S("radialGradient", { id: uid, cx: "50%", cy: "38%", r: "70%" }, defs);
+  S("stop", { offset: "0%", "stop-color": accent, "stop-opacity": 0.30 }, grad);
+  S("stop", { offset: "100%", "stop-color": accent, "stop-opacity": 0.04 }, grad);
+
+  // below ~44px the alliance tag is unreadable and just reads as mud, so the
+  // small plate drops it and gives the whole tile to the monogram
+  const tagged = size >= 44;
+
+  S("rect", { x: 0, y: 0, width: 96, height: 96, fill: "#191917" });
+  S("rect", { x: 0, y: 0, width: 96, height: 96, fill: `url(#${uid})` });
+  // stencilled corner cut, like a stamped crate marking
+  S("path", { d: "M96 0 L96 22 L74 0 Z", fill: accent, opacity: 0.85 });
+  if (tagged) {
+    S("rect", { x: 0, y: 76, width: 96, height: 20, fill: "#000", opacity: 0.45 });
+    S("rect", { x: 0, y: 75.5, width: 96, height: 1, fill: accent, opacity: 0.7 });
+  }
+
+  const mono = S("text", {
+    x: 48, y: tagged ? 44 : 50, "text-anchor": "middle", "dominant-baseline": "central",
+    fill: "#f4f3ec", "font-family": "Rajdhani, 'Noto Sans KR', sans-serif",
+    "font-weight": 700, "font-size": tagged ? 40 : 50, "letter-spacing": -1,
+  });
+  mono.textContent = monogram(name);
+
+  if (tagged) {
+    const tag = S("text", {
+      x: 48, y: 87, "text-anchor": "middle", "dominant-baseline": "central",
+      fill: accent, "font-family": "Rajdhani, sans-serif",
+      "font-weight": 700, "font-size": 11, "letter-spacing": 2.5,
+    });
+    tag.textContent = CFG.name.toUpperCase();
+  }
+
+  S("rect", { x: 0.5, y: 0.5, width: 95, height: 95, fill: "none",
+              stroke: accent, "stroke-opacity": 0.35, "stroke-width": 1 });
+  return svg;
+}
+
+function avatarEl(name, size) {
+  const src = AVATARS[name];
+  if (!src) return avatarPlate(name, size);
+  const img = el("img", "avatar");
+  img.src = src;
+  img.width = size; img.height = size;
+  img.loading = "lazy";
+  img.alt = name;
+  // a path in the index with no file behind it falls back rather than 404-ing visibly
+  img.addEventListener("error", () => img.replaceWith(avatarPlate(name, size)), { once: true });
+  return img;
+}
+
 /* ------------------------------------------------------------ SVG line chart */
 const tip = () => $("#chartTip");
 
@@ -649,7 +763,14 @@ function renderRoster(filter = "") {
 
     const cells = [
       el("td", "num", "#" + m.latestRank),
-      (() => { const td = el("td"); td.appendChild(el("span", "name", m.name)); return td; })(),
+      (() => {
+        const td = el("td");
+        const who = el("div", "who-cell");
+        who.appendChild(avatarEl(m.name, 30));
+        who.appendChild(el("span", "name", m.name));
+        td.appendChild(who);
+        return td;
+      })(),
       (() => { const td = el("td"); td.appendChild(tierChip(m.tier)); return td; })(),
       el("td", "num power", fmtPower(m.latestPower)),
       el("td", "num delta " + deltaClass(d1 ? d1.abs : 0), d1 ? fmtSigned(d1.abs) : "—"),
@@ -715,9 +836,13 @@ function renderDossier() {
   const grid = el("div", "dossier-grid");
 
   const card = el("div", "panel dossier-card");
-  const nameEl = el("div", "big-name", m.name);
-  card.appendChild(nameEl);
-  card.appendChild(tierChip(m.tier));
+  const head = el("div", "dossier-id");
+  head.appendChild(avatarEl(m.name, 72));
+  const idText = el("div");
+  idText.appendChild(el("div", "big-name", m.name));
+  idText.appendChild(tierChip(m.tier));
+  head.appendChild(idText);
+  card.appendChild(head);
   const facts = el("div", "dossier-facts");
   const fact = (label, value, cls) => {
     const f = el("div", "fact");
@@ -1059,6 +1184,8 @@ async function boot() {
   $("#compareAdd").addEventListener("click", () => addCompare($("#compareSearch").value));
   $("#compareSearch").addEventListener("keydown", (e) => { if (e.key === "Enter") addCompare(e.target.value); });
   $("#compareSearch").addEventListener("change", (e) => addCompare(e.target.value));
+
+  await loadAvatarIndex();
 
   const base = getApiUrl();
   if (base) {
