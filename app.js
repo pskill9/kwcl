@@ -698,35 +698,44 @@ function renderAllianceChart() {
   });
 }
 
+function hofCard(w, featured) {
+  const card = el("article", "hof-card" + (featured ? " featured" : ""));
+  card.setAttribute("role", "listitem");
+  card.appendChild(avatarEl(w.name, featured ? 128 : 96));
+  const meta = el("div", "hof-meta");
+  meta.appendChild(el("div", "hof-event", w.event ? STR("hofEvent") + " " + w.event : STR("hofEvent")));
+  meta.appendChild(el("div", "hof-name", w.name));
+  if (w.week) meta.appendChild(el("div", "hof-week", w.week));
+  card.appendChild(meta);
+  if (featured) card.appendChild(el("span", "hof-flag", STR("hofLatest")));
+  // a winner who is still in the alliance links through to their dossier
+  if (state.members.has(w.name)) {
+    card.classList.add("clickable");
+    card.tabIndex = 0;
+    const open = () => openDossier(w.name);
+    card.addEventListener("click", open);
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+    });
+  }
+  return card;
+}
+
 function renderHallOfFame() {
   const section = $("#hallOfFame");
   if (!HOF.length) { section.classList.add("hidden"); return; }
   setTitle($("#hofTitle"), "hallOfFame");
 
+  // The current winner sits outside the scroller entirely, so scrolling back
+  // through older events never pushes them off screen.
+  const featured = $("#hofFeatured");
+  featured.innerHTML = "";
+  featured.appendChild(hofCard(HOF[0], true));
+
   const track = $("#hofTrack");
   track.innerHTML = "";
-  HOF.forEach((w, i) => {
-    const card = el("article", "hof-card" + (i === 0 ? " latest" : ""));
-    card.setAttribute("role", "listitem");
-    card.appendChild(avatarEl(w.name, 96));
-    const meta = el("div", "hof-meta");
-    meta.appendChild(el("div", "hof-event", w.event ? STR("hofEvent") + " " + w.event : STR("hofEvent")));
-    meta.appendChild(el("div", "hof-name", w.name));
-    if (w.week) meta.appendChild(el("div", "hof-week", w.week));
-    card.appendChild(meta);
-    if (i === 0) card.appendChild(el("span", "hof-flag", STR("hofLatest")));
-    // a winner who is still in the alliance links through to their dossier
-    if (state.members.has(w.name)) {
-      card.classList.add("clickable");
-      card.tabIndex = 0;
-      const open = () => openDossier(w.name);
-      card.addEventListener("click", open);
-      card.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
-      });
-    }
-    track.appendChild(card);
-  });
+  for (const w of HOF.slice(1)) track.appendChild(hofCard(w, false));
+  track.classList.toggle("hidden", HOF.length < 2);
 
   section.classList.remove("hidden");
   updateHofNav();
