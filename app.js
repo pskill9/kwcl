@@ -26,6 +26,9 @@ const STR_EN = {
   statCommanders: "Commanders",
   statAvgPower: "Avg power",
   charter: "Alliance charter",
+  hallOfFame: "Hall of fame",
+  hofEvent: "Event",
+  hofLatest: "Latest",
   movers: "Movers",
   topGainers: "Top gainers",
   declining: "Declining",
@@ -219,6 +222,29 @@ async function loadLive(base) {
 
   writeCache(cache, sheets.map((s) => s.name));
   return snapshots;
+}
+
+/* ------------------------------------------------------------ hall of fame
+   A hand-kept sheet tab of past event winners: Event, Week, Commander. It has
+   no date in its name, so the snapshot loader already skips it — this fetches
+   it explicitly. Missing tab, empty tab or a fork that never made one all end
+   the same way: the section stays hidden. */
+const HOF = [];
+
+async function loadHallOfFame(base) {
+  const sheet = CFG.hallOfFameSheet || "Hall of Fame";
+  try {
+    const json = await fetchJson(base + "?action=data&sheet=" + encodeURIComponent(sheet), 20000, 0);
+    const rows = (json.data || []).map((r) => ({
+      event: String(r.Event == null ? "" : r.Event).trim(),
+      week: String(r.Week == null ? "" : r.Week).trim(),
+      name: String(r.Commander == null ? "" : r.Commander).trim(),
+    })).filter((r) => r.name);
+    // newest first: week descends, then event, so a week with two entries still orders
+    rows.sort((a, b) => b.week.localeCompare(a.week) || (Number(b.event) || 0) - (Number(a.event) || 0));
+    HOF.length = 0;
+    HOF.push(...rows);
+  } catch (_) { /* no sheet, no section */ }
 }
 
 /* ------------------------------------------------------------ demo data */
@@ -672,6 +698,75 @@ function renderAllianceChart() {
   });
 }
 
+function renderHallOfFame() {
+  const section = $("#hallOfFame");
+  if (!HOF.length) { section.classList.add("hidden"); return; }
+  setTitle($("#hofTitle"), "hallOfFame");
+
+  const track = $("#hofTrack");
+  track.innerHTML = "";
+  HOF.forEach((w, i) => {
+    const card = el("article", "hof-card" + (i === 0 ? " latest" : ""));
+    card.setAttribute("role", "listitem");
+    card.appendChild(avatarEl(w.name, 96));
+    const meta = el("div", "hof-meta");
+    meta.appendChild(el("div", "hof-event", w.event ? STR("hofEvent") + " " + w.event : STR("hofEvent")));
+    meta.appendChild(el("div", "hof-name", w.name));
+    if (w.week) meta.appendChild(el("div", "hof-week", w.week));
+    card.appendChild(meta);
+    if (i === 0) card.appendChild(el("span", "hof-flag", STR("hofLatest")));
+    // a winner who is still in the alliance links through to their dossier
+    if (state.members.has(w.name)) {
+      card.classList.add("clickable");
+      card.tabIndex = 0;
+      const open = () => openDossier(w.name);
+      card.addEventListener("click", open);
+      card.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+      });
+    }
+    track.appendChild(card);
+  });
+
+  section.classList.remove("hidden");
+  updateHofNav();
+}
+
+/* Arrows only exist when the rail actually overflows — with three winners on a
+   wide screen there is nothing to scroll to. */
+function updateHofNav() {
+  const track = $("#hofTrack"), nav = $("#hofNav");
+  if (!track || !nav) return;
+  const overflows = track.scrollWidth > track.clientWidth + 4;
+  nav.classList.toggle("hidden", !overflows);
+  const end = track.scrollWidth - track.clientWidth - 2;
+  $("#hofPrev").disabled = track.scrollLeft <= 2;
+  $("#hofNext").disabled = track.scrollLeft >= end;
+}
+
+function wireHallOfFame() {
+  const track = $("#hofTrack");
+  const step = () => {
+    const card = track.querySelector(".hof-card");
+    return card ? (card.offsetWidth + 12) * 2 : 320;   // two cards per press
+  };
+  const press = (dir) => {
+    track.scrollBy({ left: dir * step(), behavior: "smooth" });
+    setTimeout(updateHofNav, 400);   // don't rely on scroll events alone for the arrow states
+  };
+  $("#hofPrev").addEventListener("click", () => press(-1));
+  $("#hofNext").addEventListener("click", () => press(1));
+  // recheck once scrolling settles too — a smooth scroll can land after the
+  // last scroll event we saw, which would leave an arrow wrongly enabled
+  let settle;
+  track.addEventListener("scroll", () => {
+    updateHofNav();
+    clearTimeout(settle);
+    settle = setTimeout(updateHofNav, 120);
+  }, { passive: true });
+  addEventListener("resize", updateHofNav);
+}
+
 function renderMovers() {
   const opts = ["1D", "7D", "30D", "ALL"];
   segTabs($("#moversRange"), opts, state.moversRange, (o) => { state.moversRange = o; renderMovers(); });
@@ -1019,6 +1114,7 @@ function renderTiers() {
 function renderAll() {
   renderHero();
   renderAllianceChart();
+  renderHallOfFame();
   renderMovers();
   renderRoster($("#rosterSearch").value || "");
   renderDossier();
@@ -1180,6 +1276,7 @@ async function boot() {
   wireRefresh();
   $("#rosterSearch").addEventListener("input", (e) => renderRoster(e.target.value));
   wireRosterSort();
+  wireHallOfFame();
   $("#dossierSelect").addEventListener("change", (e) => { state.dossierName = e.target.value; renderDossier(); });
   $("#compareAdd").addEventListener("click", () => addCompare($("#compareSearch").value));
   $("#compareSearch").addEventListener("keydown", (e) => { if (e.key === "Enter") addCompare(e.target.value); });
@@ -1190,7 +1287,9 @@ async function boot() {
   const base = getApiUrl();
   if (base) {
     try {
-      const snaps = await loadLive(base.replace(/\/+$/, ""));
+      const clean = base.replace(/\/+$/, "");
+      const snaps = await loadLive(clean);
+      await loadHallOfFame(clean);
       state.source = "live";
       buildModel(snaps);
       setSourceUI();

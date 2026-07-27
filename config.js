@@ -68,6 +68,7 @@ window.ALLIANCE_CONFIG = {
     statCommanders: { local: "지휘관", en: "Commanders" },
     statAvgPower: { local: "평균 전투력", en: "Avg power" },
     charter: { local: "연맹 강령", en: "Alliance charter" },
+    hallOfFame: { local: "명예의 전당", en: "Hall of fame" },
     movers: { local: "전력 변동", en: "Movers" },
     roster: { local: "서열표", en: "Roster" },
     dossier: { local: "지휘관 기록", en: "Commander dossier" },

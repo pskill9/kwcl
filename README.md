@@ -69,6 +69,25 @@ One sheet per day. The site loads up to the 120 most recent snapshots, caches
 past days in localStorage (historical sheets are immutable), and only refetches
 the latest day on each visit.
 
+### Hall of fame (optional)
+
+Add a tab named **`Hall of Fame`** with the columns `Event`, `Week`,
+`Commander` — one row per winner — and the site grows a scrollable wall of past
+MVPs, newest first, each with the commander's avatar. No tab, no section. Point
+`hallOfFameSheet` in `config.js` at a different name if you prefer one.
+
+Format the `Week` column as **plain text** (or type it with a leading
+apostrophe). Left as a date, Sheets hands the API a `Date`, which serialises to
+UTC and can come back a day earlier than what you typed.
+
+### Commander avatars (optional)
+
+`assets/commanders/index.json` maps commander name → image path, and the roster,
+dossier and hall of fame use it. Anyone missing from it gets an identity plate
+generated in the browser from their name and your alliance tag, so the page
+never shows a blank square. The kWcl images were cropped from in-game ranking
+screenshots by the `alliance-snapshot` skill.
+
 ## Hosting
 
 Served from GitHub Pages off the `main` branch root. Any push to `main`

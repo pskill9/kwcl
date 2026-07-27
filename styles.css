@@ -261,6 +261,50 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 0 20px 40px; }
   border-left: 3px solid var(--taegeuk-red); padding-left: 12px;
 }
 
+/* ---------- hall of fame ---------- */
+.hof-nav { display: flex; gap: 6px; }
+.hof-nav button {
+  width: 30px; height: 30px; padding: 0; line-height: 1; font-size: 17px;
+  background: var(--surface); color: var(--ink-2); font-family: var(--font-num);
+  border: 1px solid var(--baseline); border-radius: 7px; cursor: pointer;
+}
+.hof-nav button:hover:not(:disabled) { color: var(--ink); border-color: var(--ink-mute); }
+.hof-nav button:disabled { opacity: 0.35; cursor: default; }
+
+/* No scroll-snap and no CSS scroll-behavior here on purpose: with only a
+   couple of cards' worth of overflow, snapping leaves the arrows with nowhere
+   legal to land, and the smooth behaviour is passed per-call from the arrow
+   handlers instead. */
+.hof-track {
+  display: flex; gap: 12px; overflow-x: auto; padding: 2px 2px 10px;
+  scrollbar-width: thin; scrollbar-color: var(--baseline) transparent;
+}
+.hof-track::-webkit-scrollbar { height: 8px; }
+.hof-track::-webkit-scrollbar-thumb { background: var(--baseline); border-radius: 99px; }
+.hof-card {
+  position: relative; flex: 0 0 auto; width: 168px;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 16px 14px 14px; text-align: center;
+  background: var(--surface); border: 1px solid var(--grid); border-radius: 12px;
+}
+.hof-card.latest { border-color: var(--taegeuk-red); background: var(--surface-2); }
+.hof-card.clickable { cursor: pointer; }
+.hof-card.clickable:hover { border-color: var(--ink-mute); }
+.hof-card .avatar { width: 96px; height: 96px; border-radius: 10px; }
+.hof-meta { display: flex; flex-direction: column; gap: 3px; min-width: 0; width: 100%; }
+.hof-event {
+  font-family: var(--font-num); font-weight: 700; font-size: 10.5px; letter-spacing: 2px;
+  text-transform: uppercase; color: var(--ink-mute);
+}
+.hof-name { color: var(--ink); font-weight: 700; font-size: 15px; overflow-wrap: anywhere; }
+.hof-week { font-family: var(--font-num); font-weight: 600; font-size: 12px; color: var(--ink-mute); }
+.hof-flag {
+  position: absolute; top: -1px; right: -1px; padding: 3px 8px;
+  font-family: var(--font-num); font-weight: 700; font-size: 9.5px; letter-spacing: 1.5px;
+  text-transform: uppercase; color: #fff; background: var(--taegeuk-red);
+  border-radius: 0 11px 0 10px;
+}
+
 /* ---------- movers ---------- */
 .movers-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 @media (max-width: 760px) { .movers-grid { grid-template-columns: 1fr; } }

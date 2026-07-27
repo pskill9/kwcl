@@ -64,6 +64,18 @@
     <div class="panel charter" id="charterBody"></div>
   </section>
 
+  <!-- HALL OF FAME (from the Hall of Fame sheet; hidden when it has no rows) -->
+  <section class="section hidden" id="hallOfFame">
+    <div class="section-head">
+      <h2 class="section-title" id="hofTitle">Hall of fame</h2>
+      <div class="hof-nav hidden" id="hofNav">
+        <button type="button" id="hofPrev" aria-label="Previous winners">‹</button>
+        <button type="button" id="hofNext" aria-label="Later winners">›</button>
+      </div>
+    </div>
+    <div class="hof-track" id="hofTrack" tabindex="0" role="list" aria-label="Past MVPs"></div>
+  </section>
+
   <!-- MOVERS -->
   <section class="section" id="movers">
     <div class="section-head">
