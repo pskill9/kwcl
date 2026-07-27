@@ -287,6 +287,17 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 0 20px 40px; }
   text-transform: uppercase; color: var(--ink-mute);
   border-bottom: 1px solid var(--baseline); position: sticky; top: 0; background: var(--surface);
 }
+/* sortable headers — the arrow is a ::after so applyConfig's textContent
+   rewrite of [data-str] labels can't wipe it */
+#rosterTable th[data-sort] { cursor: pointer; user-select: none; }
+#rosterTable th[data-sort]:hover { color: var(--ink-2); }
+#rosterTable th[data-sort]::after { content: "↕"; margin-left: 6px; opacity: 0.28; letter-spacing: 0; }
+#rosterTable th[data-sort]:hover::after { opacity: 0.6; }
+#rosterTable th[aria-sort="ascending"] { color: var(--ink); }
+#rosterTable th[aria-sort="ascending"]::after { content: "▲"; opacity: 1; font-size: 9px; }
+#rosterTable th[aria-sort="descending"] { color: var(--ink); }
+#rosterTable th[aria-sort="descending"]::after { content: "▼"; opacity: 1; font-size: 9px; }
+#rosterTable th[data-sort]:focus-visible { outline: 2px solid var(--taegeuk-blue); outline-offset: -2px; }
 .roster tbody tr { border-bottom: 1px solid var(--grid); cursor: pointer; }
 .roster tbody tr:hover { background: var(--surface-2); }
 .roster td.num, .roster th.num { text-align: right; font-variant-numeric: tabular-nums; }

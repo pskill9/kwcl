@@ -41,7 +41,7 @@ const STR_EN = {
   searchPlaceholder: "Search commander…",
   addCommander: "Add commander (max 6)…",
   addBtn: "Add",
-  rosterHint: "Click any commander for their dossier.",
+  rosterHint: "Click any commander for their dossier. Click a column header to sort.",
   modePower: "Power", modeIndexed: "Indexed %",
   compareHintPower: "Absolute power. Switch to Indexed % to compare growth rates fairly.",
   compareHintIndexed: "Indexed: growth since each commander's first snapshot — fair comparison across different power levels.",
@@ -102,6 +102,7 @@ const state = {
   compareMode: "power",      // "power" | "indexed"
   allianceRange: "ALL",
   moversRange: "7D",
+  rosterSort: { key: "rank", dir: "asc" },
   dossierName: null,
 };
 
@@ -598,20 +599,53 @@ function renderMovers() {
   paint($("#losersList"), losers, "down");
 }
 
+/* Sortable roster columns. `dir` is the direction a first click picks — ranks
+   read best smallest-first, everything else biggest-first. Rows with no value
+   (a commander too new to have a 7d delta) always sink to the bottom, whichever
+   way the column is pointing. */
+const TIER_ORDER = ["R5", "R4", "R3", "R2", "R1"];
+const ROSTER_SORTS = {
+  rank:      { dir: "asc",  value: (r) => r.m.latestRank },
+  commander: { dir: "asc",  value: (r) => r.m.name, text: true },
+  tier:      { dir: "desc", value: (r) => { const i = TIER_ORDER.indexOf(r.m.tier); return i === -1 ? null : TIER_ORDER.length - i; } },
+  power:     { dir: "desc", value: (r) => r.m.latestPower },
+  d1:        { dir: "desc", value: (r) => (r.d1 ? r.d1.abs : null) },
+  d7:        { dir: "desc", value: (r) => (r.d7 ? r.d7.abs : null) },
+};
+
+function sortRoster(rows, key, dir) {
+  const col = ROSTER_SORTS[key] || ROSTER_SORTS.rank;
+  const sign = dir === "asc" ? 1 : -1;
+  return rows.sort((a, b) => {
+    const va = col.value(a), vb = col.value(b);
+    if (va == null || vb == null) {
+      if (va == null && vb == null) return a.m.latestRank - b.m.latestRank;
+      return va == null ? 1 : -1;
+    }
+    const c = col.text ? String(va).localeCompare(String(vb)) : va - vb;
+    return c ? c * sign : a.m.latestRank - b.m.latestRank;   // rank breaks ties
+  });
+}
+
 function renderRoster(filter = "") {
   const tbody = $("#rosterTable tbody");
   tbody.innerHTML = "";
   const idx1 = idxDaysAgo(1), idx7 = idxDaysAgo(7);
-  const members = [...state.members.values()]
+  const rows = [...state.members.values()]
     .filter((m) => m.active)
     .filter((m) => m.name.toLowerCase().includes(filter.toLowerCase()))
-    .sort((a, b) => a.latestRank - b.latestRank);
+    .map((m) => ({ m, d1: seriesDelta(m.power, idx1), d7: seriesDelta(m.power, idx7) }));
+  sortRoster(rows, state.rosterSort.key, state.rosterSort.dir);
 
-  for (const m of members) {
+  document.querySelectorAll("#rosterTable th[data-sort]").forEach((th) => {
+    const on = th.dataset.sort === state.rosterSort.key;
+    if (on) th.setAttribute("aria-sort", state.rosterSort.dir === "asc" ? "ascending" : "descending");
+    else th.removeAttribute("aria-sort");
+  });
+
+  for (const { m, d1, d7 } of rows) {
     const tr = document.createElement("tr");
     tr.tabIndex = 0;
-    const d1 = seriesDelta(m.power, idx1);
-    const d7 = seriesDelta(m.power, idx7);
 
     const cells = [
       el("td", "num", "#" + m.latestRank),
@@ -628,6 +662,25 @@ function renderRoster(filter = "") {
     tr.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
     tbody.appendChild(tr);
   }
+}
+
+/* Header clicks re-sort the roster: a new column starts in its natural
+   direction, the current column flips. */
+function wireRosterSort() {
+  document.querySelectorAll("#rosterTable th[data-sort]").forEach((th) => {
+    const key = th.dataset.sort;
+    const pick = () => {
+      const cur = state.rosterSort;
+      state.rosterSort = cur.key === key
+        ? { key, dir: cur.dir === "asc" ? "desc" : "asc" }
+        : { key, dir: ROSTER_SORTS[key].dir };
+      renderRoster($("#rosterSearch").value || "");
+    };
+    th.addEventListener("click", pick);
+    th.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); }
+    });
+  });
 }
 
 function openDossier(name) {
@@ -1001,6 +1054,7 @@ async function boot() {
   wireSettings();
   wireRefresh();
   $("#rosterSearch").addEventListener("input", (e) => renderRoster(e.target.value));
+  wireRosterSort();
   $("#dossierSelect").addEventListener("change", (e) => { state.dossierName = e.target.value; renderDossier(); });
   $("#compareAdd").addEventListener("click", () => addCompare($("#compareSearch").value));
   $("#compareSearch").addEventListener("keydown", (e) => { if (e.key === "Enter") addCompare(e.target.value); });
