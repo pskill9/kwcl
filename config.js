@@ -36,7 +36,7 @@ window.ALLIANCE_CONFIG = {
   localName: "코리아 월드 클래스",
   game: "Last War: Survival",
 
-  apiUrl: "https://script.google.com/macros/s/AKfycbxU7SJBAKsxjOhSvkjrKogFtxhl00P6nQUES2u31BDCU8uG7je1RGP5ph2d5ljTN1Ug/exec",
+  apiUrl: "https://script.google.com/macros/s/AKfycbyt0Uiq-evzLOdYG4bfiLWfNOK__R2txYUNkAltJLxQelBqJ0AeTOKdXVrjN3pDywSC/exec",
 
   icon: "assets/crest.png",
 
