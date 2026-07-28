@@ -211,7 +211,55 @@ function saveCache(part) {
   } catch (_) { /* storage full — skip caching */ }
 }
 
+/* One request for every day, columnar so commander names aren't repeated once
+   per day. Returns null when the deployed script predates ?action=all — an old
+   deployment ignores the unknown action and answers with a single sheet's
+   rows, so the shape is what we check, not the HTTP status. */
+async function loadBulk(base, since) {
+  const url = base + "?action=all&limit=" + MAX_SNAPSHOTS + (since ? "&since=" + since : "");
+  const json = await fetchJson(url);
+  return json && Array.isArray(json.dates) && Array.isArray(json.members) ? json : null;
+}
+
+function snapshotsFromBulk(bulk) {
+  return bulk.dates.map((date, di) => ({
+    date,
+    rows: bulk.members
+      .filter((m) => m.power && m.power[di] != null)
+      .map((m) => ({
+        rank: Number(m.rank && m.rank[di]),
+        name: String(m.name || "").trim(),
+        tier: String(m.tier || "").trim().toUpperCase(),
+        power: Number(m.power[di]),
+      }))
+      .filter((r) => r.name && isFinite(r.power)),
+  }));
+}
+
 async function loadLive(base) {
+  // Fast path: ask only for days newer than what's already cached, in one call.
+  const cached = readCache().days;
+  const byDate = {};
+  for (const d of Object.values(cached)) if (d && d.date && Array.isArray(d.rows)) byDate[d.date] = d;
+  const newest = Object.keys(byDate).sort().pop() || null;
+
+  const bulk = await loadBulk(base, newest);
+  if (bulk) {
+    // `since` is inclusive, so the newest cached day comes back refreshed
+    for (const s of snapshotsFromBulk(bulk)) byDate[s.date] = { date: s.date, rows: s.rows };
+    const all = Object.keys(byDate).sort().slice(-MAX_SNAPSHOTS).map((d) => byDate[d]);
+    const days = {};
+    for (const d of all) days[d.date] = d;
+    saveCache({ days });
+    return all.map((d) => ({ date: d.date, rows: d.rows }));
+  }
+
+  return loadPerSheet(base);
+}
+
+/* Legacy path for deployments without ?action=all: list the tabs, then fetch
+   each uncached day separately. */
+async function loadPerSheet(base) {
   const meta = await fetchJson(base + "?action=sheets");
   const sheets = (meta.sheets || [])
     .filter((s) => s.date)
@@ -248,13 +296,27 @@ async function loadLive(base) {
    the same way: the section stays hidden. */
 const HOF = [];
 
+/* A Week cell left formatted as a date (rather than plain text) comes back as
+   an ISO datetime — "2026-07-05T07:00:00.000Z" — which would display raw and
+   sort against the plain ones. Midnight in the sheet's timezone lands before
+   noon UTC for western offsets and after noon for eastern ones, so the hour
+   tells us which calendar day was meant. */
+function normWeek(v) {
+  const s = String(v == null ? "" : v).trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):/);
+  if (!m) return s;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  if (+m[4] >= 12) d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
 async function loadHallOfFame(base) {
   const sheet = CFG.hallOfFameSheet || "Hall of Fame";
   try {
     const json = await fetchJson(base + "?action=data&sheet=" + encodeURIComponent(sheet), 20000, 0);
     const rows = (json.data || []).map((r) => ({
       event: String(r.Event == null ? "" : r.Event).trim(),
-      week: String(r.Week == null ? "" : r.Week).trim(),
+      week: normWeek(r.Week),
       name: String(r.Commander == null ? "" : r.Commander).trim(),
     })).filter((r) => r.name);
     // newest first: week descends, then event, so a week with two entries still orders
