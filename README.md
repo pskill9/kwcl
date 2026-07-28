@@ -66,8 +66,14 @@ override the URL per-browser at `https://…/?setup`, or pass
 - `GET {BASE}?action=data&sheet=YYYY-MM-DD` → `{ sheet, date, count, data: [{ Rank, Commander, Tier, Power }] }`
 
 One sheet per day. The site loads up to the 120 most recent snapshots, caches
-past days in localStorage (historical sheets are immutable), and only refetches
-the latest day on each visit.
+past days and the hall of fame in localStorage (historical sheets are
+immutable), and only refetches the latest day on each visit.
+
+Because Apps Script answers slowly and erratically — measured between 1.5s and
+15s per call — a return visit paints the cached snapshot **before** any request
+goes out, marks the data pill `◍ SAVED`, and swaps to `● LIVE` when the network
+catches up. If the API is unreachable, the saved snapshot stays on screen with
+an explanatory banner rather than being replaced by demo numbers.
 
 ### Hall of fame (optional)
 

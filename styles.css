@@ -87,6 +87,7 @@ a:hover { color: var(--ink); }
 }
 .data-pill.live  { color: var(--good);  border-color: rgba(12,163,12,0.4); }
 .data-pill.demo  { color: var(--s4);    border-color: rgba(201,133,0,0.4); }
+.data-pill.cached { color: var(--ink-mute); border-color: var(--baseline); }
 
 .refresh-btn {
   display: inline-flex; align-items: center; justify-content: center;

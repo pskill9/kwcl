@@ -87,7 +87,11 @@ const FETCH_CONCURRENCY = 6;
 // Bump this whenever past snapshots are edited in the sheet (e.g. commander
 // names corrected). Historical days are served from cache and never refetched,
 // so a new key is what forces every visitor to pick the corrections up.
-const CACHE_KEY = "kwcl_cache_v2";
+// v3 stores { days: { sheetName: {date, rows} }, hof: [...] }. v2 held rows
+// only, with dates supplied by the ?action=sheets response — which is exactly
+// what the first paint must not wait for, hence the date living in the cache.
+const CACHE_KEY = "kwcl_cache_v3";
+const CACHE_KEY_V2 = "kwcl_cache_v2";
 const API_KEY = "kwcl_api_url";
 const COMPARE_MAX = 6;
 
@@ -187,13 +191,23 @@ async function fetchJson(url, timeoutMs = 30000, retries = 1) {
 }
 
 function readCache() {
-  try { return JSON.parse(localStorage.getItem(CACHE_KEY)) || {}; } catch (_) { return {}; }
-}
-function writeCache(cache, keepNames) {
   try {
-    const trimmed = {};
-    for (const name of keepNames) if (cache[name]) trimmed[name] = cache[name];
-    localStorage.setItem(CACHE_KEY, JSON.stringify(trimmed));
+    const raw = JSON.parse(localStorage.getItem(CACHE_KEY));
+    if (raw && raw.days) return { days: raw.days, hof: raw.hof || null };
+  } catch (_) { /* unparseable — treat as empty */ }
+  return { days: {}, hof: null };
+}
+
+/* The snapshot and hall-of-fame loaders run concurrently and both persist, so
+   each writes only its own half and carries the other half over untouched. */
+function saveCache(part) {
+  try {
+    const cur = readCache();
+    localStorage.setItem(CACHE_KEY, JSON.stringify({
+      days: part.days || cur.days,
+      hof: part.hof === undefined ? cur.hof : part.hof,
+    }));
+    localStorage.removeItem(CACHE_KEY_V2);   // dead weight once v3 is written
   } catch (_) { /* storage full — skip caching */ }
 }
 
@@ -210,17 +224,20 @@ async function loadLive(base) {
 
   const snapshots = await pool(sheets, FETCH_CONCURRENCY, async (s) => {
     // historical sheets are immutable — only the latest is refetched
-    if (s.name !== latestName && cache[s.name]) return { date: s.date, rows: cache[s.name] };
+    const hit = cache.days[s.name];
+    if (s.name !== latestName && hit) return { date: hit.date || s.date, rows: hit.rows };
     const json = await fetchJson(base + "?action=data&sheet=" + encodeURIComponent(s.name));
     const rows = (json.data || []).map((r) => ({
       rank: Number(r.Rank), name: String(r.Commander || "").trim(),
       tier: String(r.Tier || "").trim().toUpperCase(), power: Number(r.Power),
     })).filter((r) => r.name && isFinite(r.power));
-    cache[s.name] = rows;
+    cache.days[s.name] = { date: s.date, rows };
     return { date: s.date, rows };
   });
 
-  writeCache(cache, sheets.map((s) => s.name));
+  const days = {};
+  for (const s of sheets) if (cache.days[s.name]) days[s.name] = cache.days[s.name];
+  saveCache({ days });
   return snapshots;
 }
 
@@ -244,7 +261,8 @@ async function loadHallOfFame(base) {
     rows.sort((a, b) => b.week.localeCompare(a.week) || (Number(b.event) || 0) - (Number(a.event) || 0));
     HOF.length = 0;
     HOF.push(...rows);
-  } catch (_) { /* no sheet, no section */ }
+    saveCache({ hof: rows });
+  } catch (_) { /* no sheet, no section — whatever came from cache stands */ }
 }
 
 /* ------------------------------------------------------------ demo data */
@@ -1132,12 +1150,37 @@ function renderAll() {
   $("#app").setAttribute("aria-busy", "false");
 }
 
+/* ------------------------------------------------------------ first paint
+   Everything except the newest day is already in localStorage, but rendering
+   used to wait on ?action=sheets and the newest day's fetch — several seconds
+   of Apps Script latency before anything appeared. This paints the cached
+   model straight away; the live load then replaces it in place. */
+function paintFromCache() {
+  const cache = readCache();
+  if (cache.hof && cache.hof.length) { HOF.length = 0; HOF.push(...cache.hof); }
+  const days = Object.values(cache.days || {})
+    .filter((d) => d && d.date && Array.isArray(d.rows) && d.rows.length);
+  if (!days.length) return false;
+  state.source = "cache";
+  buildModel(days.map((d) => ({ date: d.date, rows: d.rows })));
+  setSourceUI();
+  renderAll();
+  return true;
+}
+
 /* ------------------------------------------------------------ source pill / banners */
 function setSourceUI() {
   const pill = $("#dataPill");
   if (state.source === "live") {
     pill.textContent = "● LIVE";
     pill.className = "data-pill live";
+    $("#demoBanner").classList.add("hidden");
+  } else if (state.source === "cache") {
+    // real numbers, but as of the last visit — say so rather than let them
+    // pass for current, since the whole page is 24h and 7d deltas
+    pill.textContent = "◍ SAVED";
+    pill.className = "data-pill cached";
+    pill.title = "Showing your last saved snapshot — refreshing…";
     $("#demoBanner").classList.add("hidden");
   } else {
     pill.textContent = "◐ DEMO";
@@ -1159,11 +1202,12 @@ function wireRefresh() {
   });
 }
 
-function showError(msg) {
+function showError(msg, keptCache) {
   const b = $("#errorBanner");
   b.innerHTML = "";
   b.appendChild(el("strong", null, "Couldn't load alliance data. "));
-  b.appendChild(el("span", null, msg + " Showing demo data instead. "));
+  b.appendChild(el("span", null, msg +
+    (keptCache ? " Showing your last saved snapshot instead. " : " Showing demo data instead. ")));
   const retry = el("button", "link-btn", "Retry");
   retry.addEventListener("click", () => location.reload());
   b.appendChild(retry);
@@ -1292,6 +1336,7 @@ async function boot() {
   $("#compareSearch").addEventListener("change", (e) => addCompare(e.target.value));
 
   await loadAvatarIndex();
+  const painted = paintFromCache();
 
   const base = getApiUrl();
   if (base) {
@@ -1309,7 +1354,9 @@ async function boot() {
       return;
     } catch (e) {
       console.error("Live load failed:", e);
-      showError(e.message || String(e));
+      showError(e.message || String(e), painted);
+      // real-but-stale beats demo numbers: keep what the cache already painted
+      if (painted) { state.source = "cache"; setSourceUI(); return; }
     }
   }
   state.source = "demo";
