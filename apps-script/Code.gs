@@ -167,17 +167,25 @@ function findSheetForDate(ss, dateStr) {
   return null;
 }
 
-/** Ensure the header row exists and contains all INSERT_HEADERS. Returns a map header -> column index (0-based). */
-function ensureHeaders(sheet) {
+/**
+ * Ensure the header row exists and contains every header in `wanted`.
+ * Returns a map header -> column index (0-based).
+ *
+ * `wanted` is passed in rather than always being INSERT_HEADERS so that
+ * optional columns (isActive) appear only on the tabs that actually use them,
+ * instead of being added as empty columns to every daily snapshot tab.
+ */
+function ensureHeaders(sheet, wanted) {
+  wanted = wanted || INSERT_HEADERS;
   var lastCol = sheet.getLastColumn();
   var headers = [];
   if (sheet.getLastRow() >= 1 && lastCol >= 1) {
     headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); });
   }
   var changed = false;
-  for (var i = 0; i < INSERT_HEADERS.length; i++) {
-    if (headers.indexOf(INSERT_HEADERS[i]) === -1) {
-      headers.push(INSERT_HEADERS[i]);
+  for (var i = 0; i < wanted.length; i++) {
+    if (headers.indexOf(wanted[i]) === -1) {
+      headers.push(wanted[i]);
       changed = true;
     }
   }
@@ -204,7 +212,13 @@ function insertRow(ss, params) {
     created = true;
   }
 
-  var colMap = ensureHeaders(sheet);
+  // isActive is only ensured (and only written) when the caller sends it, so
+  // daily snapshot tabs don't sprout an empty column they never use.
+  var wanted = INSERT_HEADERS;
+  if (params.isActive !== undefined && params.isActive !== null && params.isActive !== '') {
+    wanted = INSERT_HEADERS.concat(['isActive']);
+  }
+  var colMap = ensureHeaders(sheet, wanted);
 
   // Build a value map keyed by header name.
   var valueFor = {
@@ -213,7 +227,8 @@ function insertRow(ss, params) {
     'Tier': params.tier,
     'Power': params.power,
     'Donation': params.donation,
-    'Kills': params.kills
+    'Kills': params.kills,
+    'isActive': params.isActive
   };
 
   function coerce(key, val) {
@@ -221,6 +236,15 @@ function insertRow(ss, params) {
     if (key === 'Rank' || key === 'Power' || key === 'Donation' || key === 'Kills') {
       var n = Number(val);
       return isNaN(n) ? val : n;
+    }
+    if (key === 'isActive') {
+      // arrives as a real boolean over POST and as the string "true"/"false"
+      // over GET; store a checkbox-friendly boolean either way
+      if (typeof val === 'boolean') return val;
+      var s = String(val).trim().toLowerCase();
+      if (s === 'true' || s === 'yes' || s === '1') return true;
+      if (s === 'false' || s === 'no' || s === '0') return false;
+      return val;
     }
     return val;
   }
