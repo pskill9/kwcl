@@ -1297,8 +1297,11 @@ async function boot() {
   if (base) {
     try {
       const clean = base.replace(/\/+$/, "");
-      const snaps = await loadLive(clean);
-      await loadHallOfFame(clean);
+      // Both go out at once — the hall of fame has nothing to do with the
+      // snapshots, and Apps Script answers slowly enough (1.5-4s a call) that
+      // running it after them added its whole latency to every cold load.
+      // loadHallOfFame never rejects, so it cannot take the snapshots down.
+      const [snaps] = await Promise.all([loadLive(clean), loadHallOfFame(clean)]);
       state.source = "live";
       buildModel(snaps);
       setSourceUI();
