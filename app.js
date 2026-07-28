@@ -803,19 +803,31 @@ function hofCard(w, featured) {
 
 function renderHallOfFame() {
   const section = $("#hallOfFame");
-  if (!HOF.length) { section.classList.add("hidden"); return; }
+
+  /* Only current members appear. A champion who has left the alliance drops
+     off the wall entirely, which can leave gaps in the event sequence — that
+     is intended. Names are logged because a hidden entry is indistinguishable
+     from a misspelling between the sheet and the roster. */
+  const shown = HOF.filter((w) => {
+    const m = state.members.get(w.name);
+    return m && m.active;
+  });
+  const hidden = HOF.filter((w) => !shown.includes(w)).map((w) => w.event + ": " + w.name);
+  if (hidden.length) console.info("Hall of fame — not in the active roster:", hidden.join(", "));
+
+  if (!shown.length) { section.classList.add("hidden"); return; }
   setTitle($("#hofTitle"), "hallOfFame");
 
   // The current winner sits outside the scroller entirely, so scrolling back
   // through older events never pushes them off screen.
   const featured = $("#hofFeatured");
   featured.innerHTML = "";
-  featured.appendChild(hofCard(HOF[0], true));
+  featured.appendChild(hofCard(shown[0], true));
 
   const track = $("#hofTrack");
   track.innerHTML = "";
-  for (const w of HOF.slice(1)) track.appendChild(hofCard(w, false));
-  track.classList.toggle("hidden", HOF.length < 2);
+  for (const w of shown.slice(1)) track.appendChild(hofCard(w, false));
+  track.classList.toggle("hidden", shown.length < 2);
 
   section.classList.remove("hidden");
   updateHofNav();
