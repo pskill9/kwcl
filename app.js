@@ -71,8 +71,12 @@ function STR(key) {
   const p = STRPAIR(key);
   return p.local ? p.local + " · " + p.en : p.en;
 }
-/* Fill a section-title / panel h2: "현지어 · <span>English</span>" or plain English. */
+/* Fill a section-title / panel h2: "현지어 · <span>English</span>" or plain English.
+   Tolerates a missing node: index.html and app.js are cached independently (10
+   minutes each on GitHub Pages), so a visitor can briefly run new JS against
+   old markup. That should cost them one section, not the whole page. */
 function setTitle(node, key) {
+  if (!node) return;
   const p = STRPAIR(key);
   node.innerHTML = "";
   if (p.local) {
@@ -797,6 +801,7 @@ function newcomers() {
 
 function renderNewcomers() {
   const section = $("#newcomers");
+  if (!section) return;                 // markup older than this script
   const list = newcomers();
   if (!list.length) {
     section.classList.add("hidden");
@@ -857,6 +862,7 @@ function hofCard(w, featured) {
 
 function renderHallOfFame() {
   const section = $("#hallOfFame");
+  if (!section) return;                 // markup older than this script
 
   /* Only current members appear. A champion who has left the alliance drops
      off the wall entirely, which can leave gaps in the event sequence — that
@@ -901,6 +907,7 @@ function updateHofNav() {
 
 function wireHallOfFame() {
   const track = $("#hofTrack");
+  if (!track) return;
   const step = () => {
     const card = track.querySelector(".hof-card");
     return card ? (card.offsetWidth + 12) * 2 : 320;   // two cards per press
