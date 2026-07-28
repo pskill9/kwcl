@@ -26,6 +26,9 @@ const STR_EN = {
   statCommanders: "Commanders",
   statAvgPower: "Avg power",
   charter: "Alliance charter",
+  newcomers: "New arrivals",
+  welcomeNote: "Joined today — say hello.",
+  welcomeFlag: "New",
   hallOfFame: "Hall of fame",
   hofEvent: "Event",
   hofLatest: "Latest",
@@ -778,6 +781,57 @@ function renderAllianceChart() {
   });
 }
 
+/* Commanders whose first-ever snapshot is the newest one — i.e. they appeared
+   in today's scrape and in no earlier day we hold. Two guards matter:
+   firstIdx > 0 excludes everyone present on the oldest day we have (on the very
+   first snapshot the whole alliance would otherwise read as brand new), and a
+   single-day history can't establish newness at all. Someone who left and came
+   back keeps their original first day, so they are not flagged here. */
+function newcomers() {
+  const last = state.dates.length - 1;
+  if (last < 1) return [];
+  return [...state.members.values()]
+    .filter((m) => m.active && m.firstIdx === last && m.firstIdx > 0)
+    .sort((a, b) => a.latestRank - b.latestRank);
+}
+
+function renderNewcomers() {
+  const section = $("#newcomers");
+  const list = newcomers();
+  if (!list.length) {
+    section.classList.add("hidden");
+    $("#welcomeList").innerHTML = "";   // don't leave yesterday's arrivals behind
+    return;
+  }
+
+  setTitle($("#newcomersTitle"), "newcomers");
+  $("#welcomeNote").textContent = STR("welcomeNote");
+
+  const box = $("#welcomeList");
+  box.innerHTML = "";
+  for (const m of list) {
+    const card = el("article", "welcome-card clickable");
+    card.tabIndex = 0;
+    card.appendChild(avatarEl(m.name, 64));
+    const meta = el("div", "welcome-meta");
+    const top = el("div", "welcome-name-row");
+    top.appendChild(el("span", "welcome-name", m.name));
+    top.appendChild(tierChip(m.tier));
+    meta.appendChild(top);
+    meta.appendChild(el("div", "welcome-stat",
+      `#${m.latestRank} · ${fmtPower(m.latestPower)}`));
+    card.appendChild(meta);
+    card.appendChild(el("span", "welcome-flag", STR("welcomeFlag")));
+    const open = () => openDossier(m.name);
+    card.addEventListener("click", open);
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+    });
+    box.appendChild(card);
+  }
+  section.classList.remove("hidden");
+}
+
 function hofCard(w, featured) {
   const card = el("article", "hof-card" + (featured ? " featured" : ""));
   card.setAttribute("role", "listitem");
@@ -1215,6 +1269,7 @@ function renderTiers() {
 function renderAll() {
   renderHero();
   renderAllianceChart();
+  renderNewcomers();
   renderHallOfFame();
   renderMovers();
   renderRoster($("#rosterSearch").value || "");

@@ -262,6 +262,30 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 0 20px 40px; }
   border-left: 3px solid var(--taegeuk-red); padding-left: 12px;
 }
 
+/* ---------- new arrivals ---------- */
+.welcome-note { color: var(--ink-2); font-size: 14px; margin: 0 0 12px; }
+.welcome-list { display: flex; flex-wrap: wrap; gap: 10px; }
+.welcome-card {
+  position: relative; display: flex; align-items: center; gap: 11px;
+  padding: 11px 16px 11px 11px; min-width: 232px;
+  background: var(--surface-2); border: 1px solid var(--grid); border-radius: 11px;
+  border-left: 3px solid var(--taegeuk-blue);
+}
+.welcome-card.clickable { cursor: pointer; }
+.welcome-card.clickable:hover { border-color: var(--ink-mute); border-left-color: var(--taegeuk-blue); }
+.welcome-card .avatar { width: 64px; height: 64px; border-radius: 9px; }
+.welcome-meta { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.welcome-name-row { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.welcome-name { color: var(--ink); font-weight: 700; font-size: 15.5px; overflow-wrap: anywhere; }
+.welcome-stat {
+  font-family: var(--font-num); font-weight: 600; font-size: 13px; color: var(--ink-mute);
+}
+.welcome-flag {
+  position: absolute; top: 8px; right: 10px;
+  font-family: var(--font-num); font-weight: 700; font-size: 9.5px; letter-spacing: 1.5px;
+  text-transform: uppercase; color: var(--taegeuk-blue);
+}
+
 /* ---------- hall of fame ---------- */
 .hof-nav { display: flex; gap: 6px; }
 .hof-nav button {
