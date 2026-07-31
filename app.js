@@ -891,6 +891,7 @@ function renderHallOfFame() {
 
   section.classList.remove("hidden");
   updateHofNav();
+  restartHofAuto();          // card set just changed — remeasure and resume
 }
 
 /* Arrows only exist when the rail actually overflows — with three winners on a
@@ -903,6 +904,124 @@ function updateHofNav() {
   const end = track.scrollWidth - track.clientWidth - 2;
   $("#hofPrev").disabled = track.scrollLeft <= 2;
   $("#hofNext").disabled = track.scrollLeft >= end;
+}
+
+/* ------------------------------------------- hall of fame auto-scroll
+   Only #hofTrack moves. The current champion lives in #hofFeatured, a sibling
+   of the rail rather than a card inside it, so "everything except the latest"
+   already is the track's contents — nothing here has to exclude them.
+
+   This ping-pongs to the end and back instead of looping like a marquee. A
+   seamless loop needs a second copy of every card, and that duplicate would
+   land in scrollWidth, which is exactly what updateHofNav() measures to decide
+   whether the arrows are usable — so a marquee would quietly leave the arrows
+   lying about where the rail ends. Reversing keeps one copy of each card and
+   the existing nav logic stays true.
+
+   Direct scrollLeft writes are deliberate: .hof-track has no CSS
+   scroll-behavior (see styles.css), so each frame lands instantly instead of
+   queueing a smooth scroll that would fight the next frame. */
+const HOF_SPEED     = 26;     // px/sec — slow enough to actually read a name
+const HOF_END_HOLD  = 1400;   // ms paused at each end before reversing
+const HOF_USER_IDLE = 2500;   // ms of stillness before we take back over
+
+const hofAuto = { raf: 0, dir: 1, pos: 0, last: 0, holdUntil: 0, userTimer: 0 };
+/* Several independent things can hold the animation (hover, focus, a manual
+   scroll, a hidden tab, scrolled out of view). A set means the last one to let
+   go is what restarts it — a plain boolean would let a mouseleave resume a
+   scroll that a hidden tab still wants stopped. */
+const hofHolds = new Set();
+
+const hofReduceMotion = () =>
+  typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function hofOverflows() {
+  const t = $("#hofTrack");
+  return !!t && !t.classList.contains("hidden") && t.scrollWidth > t.clientWidth + 4;
+}
+
+function stopHofAuto() {
+  if (hofAuto.raf) cancelAnimationFrame(hofAuto.raf);
+  hofAuto.raf = 0;
+}
+
+function restartHofAuto() {
+  stopHofAuto();
+  const t = $("#hofTrack");
+  if (!t || hofHolds.size || hofReduceMotion() || !hofOverflows()) return;
+  hofAuto.pos = t.scrollLeft;   // resync: the user may have dragged the rail
+  hofAuto.last = 0;
+  hofAuto.holdUntil = 0;
+  hofAuto.raf = requestAnimationFrame(hofStep);
+}
+
+function hofStep(ts) {
+  const t = $("#hofTrack");
+  if (!t) { hofAuto.raf = 0; return; }
+  const end = t.scrollWidth - t.clientWidth;
+  if (end <= 2) { hofAuto.raf = 0; return; }   // window grew; nothing left to scroll
+
+  if (!hofAuto.last) hofAuto.last = ts;
+  // Clamped so a tab that was backgrounded mid-frame does not resume with a
+  // multi-second delta and teleport the rail to the far end.
+  const dt = Math.min((ts - hofAuto.last) / 1000, 0.05);
+  hofAuto.last = ts;
+
+  if (ts >= hofAuto.holdUntil) {
+    // Position is tracked as a float and written each frame; at 26 px/sec a
+    // frame moves ~0.4px, which integer-rounded scrollLeft would swallow
+    // entirely and the rail would never move.
+    hofAuto.pos += hofAuto.dir * HOF_SPEED * dt;
+    if (hofAuto.pos >= end)     { hofAuto.pos = end; hofAuto.dir = -1; hofAuto.holdUntil = ts + HOF_END_HOLD; }
+    else if (hofAuto.pos <= 0)  { hofAuto.pos = 0;   hofAuto.dir =  1; hofAuto.holdUntil = ts + HOF_END_HOLD; }
+    t.scrollLeft = hofAuto.pos;
+  }
+  hofAuto.raf = requestAnimationFrame(hofStep);
+}
+
+function hofHold(reason, on) {
+  if (on) hofHolds.add(reason); else hofHolds.delete(reason);
+  if (hofHolds.size) stopHofAuto(); else restartHofAuto();
+}
+
+/* A manual scroll, arrow press or key wins for a beat, then we resume. */
+function hofUserTouched() {
+  hofHold("user", true);
+  clearTimeout(hofAuto.userTimer);
+  hofAuto.userTimer = setTimeout(() => hofHold("user", false), HOF_USER_IDLE);
+}
+
+function wireHofAuto() {
+  const section = $("#hallOfFame"), track = $("#hofTrack");
+  if (!section || !track) return;
+
+  section.addEventListener("mouseenter", () => hofHold("hover", true));
+  section.addEventListener("mouseleave", () => hofHold("hover", false));
+  section.addEventListener("focusin",    () => hofHold("focus", true));
+  section.addEventListener("focusout",   () => hofHold("focus", false));
+
+  for (const ev of ["wheel", "touchstart", "pointerdown", "keydown"]) {
+    section.addEventListener(ev, hofUserTouched, { passive: true });
+  }
+
+  document.addEventListener("visibilitychange", () => hofHold("hidden", document.hidden));
+
+  if (typeof IntersectionObserver === "function") {
+    new IntersectionObserver(
+      ([e]) => hofHold("offscreen", !e.isIntersecting),
+      { threshold: 0 },
+    ).observe(section);
+  }
+
+  // A resize can create or remove the overflow entirely, so remeasure.
+  addEventListener("resize", restartHofAuto);
+
+  // Someone flipping the OS setting mid-session should stop it immediately.
+  if (typeof matchMedia === "function") {
+    const mq = matchMedia("(prefers-reduced-motion: reduce)");
+    const onChange = () => (mq.matches ? stopHofAuto() : restartHofAuto());
+    if (mq.addEventListener) mq.addEventListener("change", onChange);
+  }
 }
 
 function wireHallOfFame() {
@@ -1466,6 +1585,7 @@ async function boot() {
   $("#rosterSearch").addEventListener("input", (e) => renderRoster(e.target.value));
   wireRosterSort();
   wireHallOfFame();
+  wireHofAuto();
   $("#dossierSelect").addEventListener("change", (e) => { state.dossierName = e.target.value; renderDossier(); });
   $("#compareAdd").addEventListener("click", () => addCompare($("#compareSearch").value));
   $("#compareSearch").addEventListener("keydown", (e) => { if (e.key === "Enter") addCompare(e.target.value); });
