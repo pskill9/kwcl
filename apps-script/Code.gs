@@ -144,6 +144,18 @@ function doPost(e) {
       } catch (ignore) {}
     }
     var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+
+    // Callout writes are the one path that needs a secret, so they route away
+    // from insertRow before it runs. Everything else falls through unchanged —
+    // push.py and the daily snapshot post no credentials and must keep working.
+    var action = String(params.action || '').toLowerCase();
+    if (action === 'callout') {
+      return jsonResponse(postCallout(ss, params));
+    }
+    if (action === 'callout_expire') {
+      return jsonResponse(expireCallout(ss, params));
+    }
+
     return jsonResponse(insertRow(ss, params));
   } catch (err) {
     return jsonResponse({ error: String(err) });
@@ -418,4 +430,173 @@ function testGetAll() {
   Logger.log('dates: ' + JSON.stringify(res.dates));
   Logger.log('members: ' + res.members.length);
   Logger.log('first: ' + JSON.stringify(res.members[0]));
+}
+
+// ===== CALLOUTS / SHOUTOUTS (added) =====
+// Short, time-limited messages shown in the site's Shoutouts section.
+//
+// READING needs nothing new: the site fetches
+//   ?action=data&sheet=Shoutouts
+// through getData, exactly the way the Hall of Fame tab is read.
+//
+// WRITING is guarded by a shared secret, because the site is static and served
+// from GitHub Pages — anything in app.js is readable by every visitor, so a
+// password checked in the browser protects nothing. The secret lives in Script
+// Properties where the browser never sees it.
+//
+// SETUP (once, in the Apps Script UI):
+//   Project Settings -> Script Properties -> Add
+//   name: CALLOUT_SECRET     value: <the password admins will type>
+// Until that property is set, every callout write is refused (fail closed), so
+// a fresh deployment is never briefly open to anyone.
+//
+// POST <WEB_APP_URL>
+//   {"action":"callout","secret":"…","type":"shoutout",
+//    "commander":"피자감자","message":"Carried the whole VS","hours":72,
+//    "author":"Makpy"}
+//   -> {ok:true, id:"s_1754…", expires:"2026-08-05T09:00:00.000Z"}
+//
+//   {"action":"callout_expire","secret":"…","id":"s_1754…"}
+//   -> {ok:true, id:"s_1754…", expires:"<now>"}
+//
+// `hours` omitted (or 0) means "until removed" — Expires is left blank.
+
+var CALLOUT_SHEET = 'Shoutouts';
+var CALLOUT_HEADERS = ['Id', 'Type', 'Commander', 'Message', 'Created', 'Expires', 'Author'];
+
+/**
+ * True only when a non-empty CALLOUT_SECRET is configured AND matches.
+ *
+ * Fails closed on purpose: an unset property means refuse, never allow. The
+ * reply never echoes the configured value.
+ */
+function calloutSecretOk(provided) {
+  var want = '';
+  try {
+    want = PropertiesService.getScriptProperties().getProperty('CALLOUT_SECRET') || '';
+  } catch (e) {
+    return false;
+  }
+  want = String(want).trim();
+  if (!want) return false;                     // not configured -> nobody gets in
+  return String(provided == null ? '' : provided).trim() === want;
+}
+
+/** Get the Shoutouts tab, creating it (with headers) the first time. */
+function calloutSheet(ss) {
+  var sh = ss.getSheetByName(CALLOUT_SHEET);
+  if (!sh) sh = ss.insertSheet(CALLOUT_SHEET);
+  ensureHeaders(sh, CALLOUT_HEADERS);
+  return sh;
+}
+
+/** header name -> 0-based column index, for the Shoutouts tab as it stands. */
+function calloutColMap(sh) {
+  var lastCol = Math.max(sh.getLastColumn(), CALLOUT_HEADERS.length);
+  var headers = sh.getRange(1, 1, 1, lastCol).getValues()[0]
+    .map(function (h) { return String(h).trim(); });
+  var map = {};
+  for (var i = 0; i < headers.length; i++) map[headers[i]] = i;
+  return { map: map, width: headers.length };
+}
+
+/** Append one callout. Returns a status object. */
+function postCallout(ss, params) {
+  if (!calloutSecretOk(params.secret)) {
+    return { ok: false, error: 'unauthorized' };
+  }
+
+  var message = String(params.message == null ? '' : params.message).trim();
+  if (!message) return { ok: false, error: 'message is required' };
+
+  var type = String(params.type || 'announcement').trim().toLowerCase();
+  if (type !== 'shoutout' && type !== 'announcement') type = 'announcement';
+
+  // A shoutout with no name is just an announcement wearing the wrong hat.
+  var commander = String(params.commander == null ? '' : params.commander).trim();
+  if (type === 'shoutout' && !commander) {
+    return { ok: false, error: 'a shoutout needs a commander' };
+  }
+
+  var now = new Date();
+  var hours = Number(params.hours);
+  if (isNaN(hours) || hours <= 0) hours = 0;              // 0 => until removed
+  var expires = hours > 0 ? new Date(now.getTime() + hours * 3600 * 1000) : null;
+
+  // Timestamp alone collides when two callouts land in the same millisecond,
+  // and a duplicate id makes "remove now" expire whichever row matched first —
+  // i.e. potentially the wrong callout. The random suffix makes that unlikely
+  // enough to ignore while keeping ids sortable by creation time.
+  var id = 's_' + now.getTime() + '_' + Math.floor(Math.random() * 1679616).toString(36);
+
+  var sh = calloutSheet(ss);
+  var cm = calloutColMap(sh);
+  var row = [];
+  for (var i = 0; i < cm.width; i++) row.push('');
+
+  var valueFor = {
+    'Id': id,
+    'Type': type,
+    'Commander': commander,
+    'Message': message,
+    'Created': now.toISOString(),
+    'Expires': expires ? expires.toISOString() : '',
+    'Author': String(params.author == null ? '' : params.author).trim()
+  };
+  for (var key in valueFor) {
+    var idx = cm.map[key];
+    if (idx !== undefined) row[idx] = valueFor[key];
+  }
+
+  sh.appendRow(row);
+
+  return {
+    ok: true,
+    id: id,
+    type: type,
+    commander: commander,
+    expires: expires ? expires.toISOString() : null,
+    rowNumber: sh.getLastRow()
+  };
+}
+
+/** Expire one callout immediately by stamping Expires = now. */
+function expireCallout(ss, params) {
+  if (!calloutSecretOk(params.secret)) {
+    return { ok: false, error: 'unauthorized' };
+  }
+
+  var id = String(params.id == null ? '' : params.id).trim();
+  if (!id) return { ok: false, error: 'id is required' };
+
+  var sh = ss.getSheetByName(CALLOUT_SHEET);
+  if (!sh || sh.getLastRow() < 2) return { ok: false, error: 'no callouts' };
+
+  var cm = calloutColMap(sh);
+  var idCol = cm.map['Id'];
+  var expCol = cm.map['Expires'];
+  if (idCol === undefined || expCol === undefined) {
+    return { ok: false, error: 'Shoutouts tab is missing Id/Expires columns' };
+  }
+
+  var ids = sh.getRange(2, idCol + 1, sh.getLastRow() - 1, 1).getValues();
+  for (var r = 0; r < ids.length; r++) {
+    if (String(ids[r][0]).trim() === id) {
+      var stamp = new Date().toISOString();
+      sh.getRange(r + 2, expCol + 1).setValue(stamp);
+      return { ok: true, id: id, expires: stamp, rowNumber: r + 2 };
+    }
+  }
+  return { ok: false, error: 'id not found: ' + id };
+}
+
+/** Editor sanity check. Set CALLOUT_SECRET first, then edit the secret below. */
+function testPostCallout() {
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  Logger.log(JSON.stringify(postCallout(ss, {
+    secret: 'REPLACE_ME',
+    type: 'announcement',
+    message: 'TEST — ignore',
+    hours: 1
+  }), null, 2));
 }

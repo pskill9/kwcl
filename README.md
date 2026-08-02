@@ -86,6 +86,37 @@ Format the `Week` column as **plain text** (or type it with a leading
 apostrophe). Left as a date, Sheets hands the API a `Date`, which serialises to
 UTC and can come back a day earlier than what you typed.
 
+### Shoutouts (optional)
+
+Short, time-limited messages shown in a **Shoutouts** section under the
+situation board — either an *announcement* (an event, a reminder) or a
+*shoutout* naming a commander and saying why. Each carries a display window and
+disappears on its own when it closes. No tab, no section.
+
+Admins post them from **`admin.html`**, which is not linked from the public
+site — bookmark it. Templates live in `config.js` under `callouts.templates`
+and are only a starting point: picking one prefills the message box, which the
+admin then edits.
+
+The password is **not** in the repo. It is a script property, so the browser
+never sees it:
+
+1. Apps Script → Project Settings → Script Properties → Add
+2. Name `CALLOUT_SECRET`, value = the password admins will type
+
+Until that property is set every callout write is refused, so a fresh
+deployment is never briefly open. The check is server-side because this site is
+static — anything in `app.js` is readable by every visitor, so a password
+checked in the browser would protect nothing.
+
+Rows land in a `Shoutouts` tab (`Id`, `Type`, `Commander`, `Message`,
+`Created`, `Expires`, `Author`). "Remove now" stamps `Expires` rather than
+deleting, so the history stays readable.
+
+Run `node tools/test-callouts.mjs` to exercise the callout code in `Code.gs`
+under fake Google services, and `node tools/mock-api.mjs` to drive the site
+locally against an in-memory sheet (`index.html?api=http://localhost:8787`).
+
 ### Commander avatars (optional)
 
 `assets/commanders/index.json` maps commander name → image path, and the roster,

@@ -26,6 +26,9 @@ const STR_EN = {
   statCommanders: "Commanders",
   statAvgPower: "Avg power",
   charter: "Alliance charter",
+  shoutouts: "Shoutouts",
+  shoutoutFlag: "Shoutout",
+  announcementFlag: "Announcement",
   newcomers: "New arrivals",
   welcomeNote: "Joined today — say hello.",
   welcomeFlag: "New",
@@ -200,19 +203,21 @@ async function fetchJson(url, timeoutMs = 30000, retries = 1) {
 function readCache() {
   try {
     const raw = JSON.parse(localStorage.getItem(CACHE_KEY));
-    if (raw && raw.days) return { days: raw.days, hof: raw.hof || null };
+    if (raw && raw.days) return { days: raw.days, hof: raw.hof || null, shoutouts: raw.shoutouts || null };
   } catch (_) { /* unparseable — treat as empty */ }
-  return { days: {}, hof: null };
+  return { days: {}, hof: null, shoutouts: null };
 }
 
-/* The snapshot and hall-of-fame loaders run concurrently and both persist, so
-   each writes only its own half and carries the other half over untouched. */
+/* The snapshot, hall-of-fame and shoutout loaders run concurrently and all
+   persist, so each writes only its own slice and carries the others over
+   untouched. */
 function saveCache(part) {
   try {
     const cur = readCache();
     localStorage.setItem(CACHE_KEY, JSON.stringify({
       days: part.days || cur.days,
       hof: part.hof === undefined ? cur.hof : part.hof,
+      shoutouts: part.shoutouts === undefined ? cur.shoutouts : part.shoutouts,
     }));
     localStorage.removeItem(CACHE_KEY_V2);   // dead weight once v3 is written
   } catch (_) { /* storage full — skip caching */ }
@@ -332,6 +337,107 @@ async function loadHallOfFame(base) {
     HOF.push(...rows);
     saveCache({ hof: rows });
   } catch (_) { /* no sheet, no section — whatever came from cache stands */ }
+}
+
+/* ------------------------------------------------------------ shoutouts
+   A hand-posted tab of short, time-limited messages: Id, Type, Commander,
+   Message, Created, Expires, Author. Written by admin.html through the
+   password-guarded callout endpoint; read here through the same plain
+   ?action=data path the hall of fame uses. No tab, no section. */
+const SHOUTOUTS = [];
+
+/* Sheets can hand back a Date object, an ISO string, or "" for a blank cell.
+   Anything that fails to parse is treated as ALREADY EXPIRED rather than
+   never-expiring: a malformed row should disappear on its own, not stick to
+   the front page forever with no way to clear it from the UI. */
+function calloutExpiry(v) {
+  if (v === null || v === undefined) return null;          // blank => until removed
+  const s = String(v).trim();
+  if (!s) return null;
+  const t = Date.parse(s);
+  return isNaN(t) ? 0 : t;                                 // 0 => epoch => expired
+}
+
+function calloutActive(c, now) {
+  return c.expires === null || c.expires > now;
+}
+
+async function loadShoutouts(base) {
+  const sheet = (CFG.callouts && CFG.callouts.sheet) || "Shoutouts";
+  try {
+    const json = await fetchJson(base + "?action=data&sheet=" + encodeURIComponent(sheet), 20000, 0);
+    const rows = (json.data || []).map((r) => ({
+      id: String(r.Id == null ? "" : r.Id).trim(),
+      type: String(r.Type == null ? "" : r.Type).trim().toLowerCase() === "shoutout" ? "shoutout" : "announcement",
+      name: String(r.Commander == null ? "" : r.Commander).trim(),
+      message: String(r.Message == null ? "" : r.Message).trim(),
+      created: String(r.Created == null ? "" : r.Created).trim(),
+      expires: calloutExpiry(r.Expires),
+      author: String(r.Author == null ? "" : r.Author).trim(),
+    })).filter((r) => r.message);
+    // newest first, so the freshest callout leads
+    rows.sort((a, b) => String(b.created).localeCompare(String(a.created)));
+    SHOUTOUTS.length = 0;
+    SHOUTOUTS.push(...rows);
+    saveCache({ shoutouts: rows });
+  } catch (_) { /* no tab, no section — whatever came from cache stands */ }
+}
+
+function renderShoutouts() {
+  const section = $("#shoutouts");
+  const list = $("#shoutoutList");
+  if (!section || !list) return;
+
+  // Filtering at render (not at load) is what makes a cached-but-since-expired
+  // callout vanish on a return visit instead of flashing before the network
+  // answers.
+  const now = Date.now();
+  const active = SHOUTOUTS.filter((c) => calloutActive(c, now));
+
+  list.innerHTML = "";
+  if (!active.length) { section.classList.add("hidden"); return; }
+
+  setTitle($("#shoutoutsTitle"), "shoutouts");
+
+  for (const c of active) {
+    const card = el("div", "callout callout-" + c.type);
+
+    if (c.type === "shoutout" && c.name) {
+      card.appendChild(avatarEl(c.name, 46));
+    } else {
+      card.appendChild(el("div", "callout-icon", "!"));
+    }
+
+    const body = el("div", "callout-body");
+    const head = el("div", "callout-head");
+    head.appendChild(el("span", "callout-flag",
+      STR(c.type === "shoutout" ? "shoutoutFlag" : "announcementFlag")));
+    if (c.type === "shoutout" && c.name) head.appendChild(el("span", "callout-name", c.name));
+    body.appendChild(head);
+
+    // Admins type multi-line messages; keep the line breaks without ever
+    // putting sheet text through innerHTML.
+    const msg = el("p", "callout-msg");
+    msg.textContent = c.message;
+    body.appendChild(msg);
+
+    const meta = [];
+    if (c.author) meta.push(c.author);
+    if (c.expires !== null) meta.push(untilLabel(c.expires - now));
+    if (meta.length) body.appendChild(el("div", "callout-meta", meta.join(" · ")));
+
+    card.appendChild(body);
+    list.appendChild(card);
+  }
+  section.classList.remove("hidden");
+}
+
+/** "3d left" / "5h left" / "12m left" — coarse on purpose, no ticking clock. */
+function untilLabel(ms) {
+  const mins = Math.max(0, Math.round(ms / 60000));
+  if (mins >= 1440) return Math.round(mins / 1440) + "d left";
+  if (mins >= 60) return Math.round(mins / 60) + "h left";
+  return mins + "m left";
 }
 
 /* ------------------------------------------------------------ demo data */
@@ -1395,6 +1501,7 @@ function renderTiers() {
 function renderAll() {
   renderHero();
   renderAllianceChart();
+  renderShoutouts();
   renderNewcomers();
   renderHallOfFame();
   renderMovers();
@@ -1413,6 +1520,7 @@ function renderAll() {
 function paintFromCache() {
   const cache = readCache();
   if (cache.hof && cache.hof.length) { HOF.length = 0; HOF.push(...cache.hof); }
+  if (cache.shoutouts && cache.shoutouts.length) { SHOUTOUTS.length = 0; SHOUTOUTS.push(...cache.shoutouts); }
   const days = Object.values(cache.days || {})
     .filter((d) => d && d.date && Array.isArray(d.rows) && d.rows.length);
   if (!days.length) return false;
@@ -1602,7 +1710,7 @@ async function boot() {
       // snapshots, and Apps Script answers slowly enough (1.5-4s a call) that
       // running it after them added its whole latency to every cold load.
       // loadHallOfFame never rejects, so it cannot take the snapshots down.
-      const [snaps] = await Promise.all([loadLive(clean), loadHallOfFame(clean)]);
+      const [snaps] = await Promise.all([loadLive(clean), loadHallOfFame(clean), loadShoutouts(clean)]);
       state.source = "live";
       buildModel(snaps);
       setSourceUI();

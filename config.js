@@ -45,6 +45,27 @@ window.ALLIANCE_CONFIG = {
     accentB: "#3069c9",   // taegeuk blue
   },
 
+  /* Shoutouts — short, time-limited messages posted from admin.html.
+     Reword or add templates freely; nothing here is referenced by name in
+     the code. `text` is only a starting point, the admin edits it before
+     posting. The password is NOT here — it lives in the Apps Script
+     property CALLOUT_SECRET, which the browser never sees. */
+  callouts: {
+    sheet: "Shoutouts",
+    templates: [
+      {
+        type: "announcement",
+        label: "Event announcement",
+        text: "Alliance event — \nWhen: \nWhat to do: ",
+      },
+      {
+        type: "shoutout",
+        label: "Great performance",
+        text: "Outstanding work this week — ",
+      },
+    ],
+  },
+
   charter: {
     lead: "We move forward in step with all team members. Please enjoy the game with good manners and an altruistic attitude.",
     rules: [

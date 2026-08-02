@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>kWcl — Shoutouts admin</title>
+<link rel="icon" id="favicon" href="assets/crest.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Noto+Sans+KR:wght@400;500;700&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" id="brandMark">kWcl</span>
+    <span class="brand-sub">Shoutouts admin</span>
+  </div>
+  <div class="topbar-right">
+    <span class="data-pill" id="dataPill" title="Admin status">LOCKED</span>
+    <a class="refresh-btn" href="index.html" title="Back to the site" aria-label="Back to the site">←</a>
+  </div>
+</header>
+
+<div class="banner banner-error hidden" id="errorBanner"></div>
+
+<main id="app">
+
+  <!-- LOCK SCREEN -->
+  <section class="section" id="lockSection">
+    <div class="section-head">
+      <h2 class="section-title">Admin password</h2>
+    </div>
+    <div class="panel">
+      <p class="settings-note">
+        The password is checked by the Apps Script, not by this page — it is
+        never stored in the site. It is kept for this browser tab only and
+        forgotten when you close it.
+      </p>
+      <label class="field">
+        <span>Password</span>
+        <input type="password" id="pwInput" autocomplete="current-password" spellcheck="false">
+      </label>
+      <p class="settings-status" id="lockStatus"></p>
+      <div class="settings-actions">
+        <button type="button" class="btn-primary" id="unlockBtn">Unlock</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- COMPOSER -->
+  <section class="section hidden" id="composeSection">
+    <div class="section-head">
+      <h2 class="section-title">Post a callout</h2>
+      <div class="seg-tabs" id="typeTabs" role="tablist" aria-label="Callout type"></div>
+    </div>
+
+    <div class="panel">
+      <label class="field">
+        <span>Template</span>
+        <select id="templateSelect" class="select"></select>
+      </label>
+
+      <label class="field" id="commanderField">
+        <span>Commander</span>
+        <input type="search" id="commanderInput" list="rosterList" spellcheck="false"
+               placeholder="Pick from the roster, or type any name…">
+        <datalist id="rosterList"></datalist>
+      </label>
+
+      <label class="field">
+        <span>Message</span>
+        <textarea id="messageInput" rows="4" spellcheck="true"
+                  placeholder="What should the alliance see?"></textarea>
+      </label>
+
+      <div class="admin-row">
+        <label class="field">
+          <span>Show for</span>
+          <select id="durationSelect" class="select">
+            <option value="6">6 hours</option>
+            <option value="24" selected>24 hours</option>
+            <option value="72">3 days</option>
+            <option value="168">1 week</option>
+            <option value="0">Until removed</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Posted by <em>(optional)</em></span>
+          <input type="text" id="authorInput" spellcheck="false" placeholder="Your name">
+        </label>
+      </div>
+
+      <h3 class="panel-label">Preview</h3>
+      <div class="callout-list" id="previewList"></div>
+
+      <p class="settings-status" id="postStatus"></p>
+      <div class="settings-actions">
+        <button type="button" class="btn-primary" id="postBtn">Post callout</button>
+        <button type="button" class="btn-ghost" id="clearBtn">Clear</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- CURRENTLY SHOWING -->
+  <section class="section hidden" id="activeSection">
+    <div class="section-head">
+      <h2 class="section-title">Currently showing</h2>
+      <button type="button" class="btn-ghost" id="reloadBtn">Reload</button>
+    </div>
+    <div class="panel">
+      <div class="callout-list" id="activeList"></div>
+      <p class="hint" id="activeHint"></p>
+    </div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <div><span class="brand-mark small">kWcl</span>
+  <span class="footer-sub">Shoutouts admin — not linked from the public site</span></div>
+</footer>
+
+<script src="config.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>
