@@ -468,9 +468,6 @@ async function loadRoster() {
       .map((r) => String(r.Commander == null ? "" : r.Commander).trim())
       .filter(Boolean)
       .sort((a, b) => a.localeCompare(b));
-    const dl = $("#rosterList");
-    dl.innerHTML = "";
-    for (const n of names) dl.appendChild(new Option(n));
     state.roster = names;
     renderCommanderChips();
     renderRosterGrid($("#commanderInput").value);
@@ -497,8 +494,6 @@ function boot() {
   $("#commanderInput").addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); addCommander(e.target.value); }
   });
-  // picking from the datalist fires change, not Enter
-  $("#commanderInput").addEventListener("change", (e) => addCommander(e.target.value));
   $("#badgeSelect").addEventListener("change", (e) => { state.badge = e.target.value; renderPreview(); });
   $("#authorInput").addEventListener("input", renderPreview);
   $("#durationSelect").addEventListener("change", renderPreview);
