@@ -190,7 +190,10 @@ async function fetchJson(url, timeoutMs = 30000, retries = 1) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
-      const res = await fetch(url, { signal: ctrl.signal, redirect: "follow" });
+      // credentials:"omit" matters — with Google cookies attached the Apps
+      // Script redirect can land on an account interstitial and answer 404
+      // with HTML, so every signed-in visitor silently fell back to cache.
+      const res = await fetch(url, { signal: ctrl.signal, redirect: "follow", credentials: "omit" });
       if (!res.ok) throw new Error("HTTP " + res.status);
       return await res.json();
     } catch (e) {

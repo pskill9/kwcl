@@ -545,6 +545,31 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 0 20px 40px; }
 .field .picker-row input { flex: 1 1 220px; width: auto; }
 .field .picker-row { align-items: center; }
 .field .hint { margin-left: 0; }
+/* visible, clickable roster — no typing needed to see who is available */
+.roster-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 8px; margin-top: 10px; max-height: 300px; overflow-y: auto;
+  padding: 10px; background: var(--page); border: 1px solid var(--grid); border-radius: 10px;
+}
+.roster-pick {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 8px 4px; background: transparent; border: 1px solid transparent;
+  border-radius: 9px; cursor: pointer; color: var(--ink-2); font: inherit;
+}
+.roster-pick:hover { background: var(--surface-2); border-color: var(--baseline); }
+.roster-pick .avatar, .roster-pick .callout-icon {
+  width: 44px; height: 44px; border-radius: 9px; flex: none; font-size: 17px;
+}
+.roster-pick-name {
+  font-size: 11px; line-height: 1.25; text-align: center; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.roster-pick.picked {
+  background: rgba(48,105,201,0.16); border-color: var(--taegeuk-blue); color: var(--ink);
+}
+.roster-pick.picked .avatar, .roster-pick.picked .callout-icon {
+  outline: 2px solid var(--taegeuk-blue); outline-offset: 1px;
+}
 .admin-row { display: flex; gap: 12px; flex-wrap: wrap; }
 .admin-row .field { flex: 1 1 200px; }
 .callout-actions { flex: none; display: flex; align-items: center; }

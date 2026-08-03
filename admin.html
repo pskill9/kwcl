@@ -64,11 +64,12 @@
         <div class="chips" id="commanderChips"></div>
         <div class="picker-row">
           <input type="search" id="commanderInput" list="rosterList" spellcheck="false"
-                 placeholder="Pick from the roster, or type any name…">
+                 placeholder="Filter the roster, or type any name…">
           <datalist id="rosterList"></datalist>
           <button type="button" class="btn-ghost" id="commanderAdd">Add</button>
         </div>
-        <p class="hint" id="commanderHint">Add as many as the shoutout covers — press Enter to add.</p>
+        <p class="hint" id="commanderHint">Click anyone below, or type a name that isn't on the roster.</p>
+        <div class="roster-grid" id="rosterGrid"></div>
       </div>
 
       <label class="field" id="badgeField">

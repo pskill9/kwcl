@@ -44,7 +44,7 @@ const state = { type: "announcement", password: "", rows: [], roster: [], names:
 /* ------------------------------------------------------------ transport */
 
 async function apiGet(params) {
-  const res = await fetch(API + "?" + new URLSearchParams(params), { redirect: "follow" });
+  const res = await fetch(API + "?" + new URLSearchParams(params), { redirect: "follow", credentials: "omit" });
   if (!res.ok) throw new Error("HTTP " + res.status);
   return res.json();
 }
@@ -58,6 +58,8 @@ async function apiPost(body) {
     headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify(body),
     redirect: "follow",
+    // see app.js fetchJson — Google cookies make Apps Script answer 404/HTML
+    credentials: "omit",
   });
   if (!res.ok) throw new Error("HTTP " + res.status);
   return res.json();
@@ -98,13 +100,33 @@ function untilLabel(ms) {
   return mins + "m left";
 }
 
-/* A deliberately plain stand-in for the site's avatar plate: the admin page
-   does not need the identity-plate generator, only a recognisable square. */
-function adminAvatar(name) {
-  const box = el("div", "callout-icon", (name || "?").trim().slice(0, 1).toUpperCase());
+/* Same avatar index the public site reads, so the picker shows real faces
+   rather than initials. Missing entries fall back to a letter tile. */
+const AVATARS = {};
+async function loadAvatarIndex() {
+  try {
+    const res = await fetch("assets/commanders/index.json", { cache: "no-cache" });
+    Object.assign(AVATARS, await res.json());
+  } catch (_) { /* initials everywhere is a fine degradation */ }
+}
+
+function letterTile(name, cls) {
+  const box = el("div", cls || "callout-icon", (name || "?").trim().slice(0, 1).toUpperCase());
   box.style.fontFamily = "var(--font-num)";
   box.style.color = "var(--taegeuk-blue)";
   return box;
+}
+
+function adminAvatar(name, size) {
+  const src = AVATARS[name];
+  if (!src) return letterTile(name);
+  const img = el("img", "avatar");
+  img.src = src;
+  img.alt = name;
+  img.loading = "lazy";
+  if (size) { img.width = size; img.height = size; }
+  img.addEventListener("error", () => img.replaceWith(letterTile(name)), { once: true });
+  return img;
 }
 
 function calloutCard(c, opts = {}) {
@@ -237,7 +259,44 @@ function addCommander(raw) {
   if (!state.names.includes(name)) state.names.push(name);
   $("#commanderInput").value = "";
   renderCommanderChips();
+  renderRosterGrid("");
   renderPreview();
+}
+
+/** Clickable roster, visible without typing. Filter narrows it live. */
+function renderRosterGrid(filter) {
+  const grid = $("#rosterGrid");
+  if (!grid) return;
+  const q = (filter || "").trim().toLowerCase();
+  const list = state.roster.filter((n) => !q || n.toLowerCase().includes(q));
+
+  grid.innerHTML = "";
+  if (!state.roster.length) {
+    grid.appendChild(el("p", "hint", "Roster unavailable — type names by hand."));
+    return;
+  }
+  if (!list.length) {
+    grid.appendChild(el("p", "hint", `Nobody matches "${filter}" — press Enter to add it as a name anyway.`));
+    return;
+  }
+
+  for (const n of list) {
+    const picked = state.names.includes(n);
+    const cell = el("button", "roster-pick" + (picked ? " picked" : ""));
+    cell.type = "button";
+    cell.title = n;
+    cell.setAttribute("aria-pressed", String(picked));
+    cell.appendChild(adminAvatar(n, 44));
+    cell.appendChild(el("span", "roster-pick-name", n));
+    cell.addEventListener("click", () => {
+      if (state.names.includes(n)) state.names = state.names.filter((m) => m !== n);
+      else state.names.push(n);
+      renderCommanderChips();
+      renderRosterGrid($("#commanderInput").value);
+      renderPreview();
+    });
+    grid.appendChild(cell);
+  }
 }
 
 function renderCommanderChips() {
@@ -251,6 +310,7 @@ function renderCommanderChips() {
     x.addEventListener("click", () => {
       state.names = state.names.filter((m) => m !== n);
       renderCommanderChips();
+      renderRosterGrid($("#commanderInput").value);
       renderPreview();
     });
     chip.appendChild(x);
@@ -259,7 +319,7 @@ function renderCommanderChips() {
   const known = state.names.filter((n) => state.roster.includes(n)).length;
   $("#commanderHint").textContent = state.names.length
     ? `${state.names.length} selected · ${known} from the roster`
-    : "Add as many as the shoutout covers — press Enter to add.";
+    : "Click anyone below, or type a name that isn't on the roster.";
 }
 
 function draft() {
@@ -352,6 +412,7 @@ async function postCallout() {
     $("#commanderInput").value = "";
     $("#messageInput").value = "";        // cleared, so syncTemplates re-prefills
     renderCommanderChips();
+    renderRosterGrid("");
     renderBadges();
     syncTemplates();
     renderPreview();
@@ -416,6 +477,7 @@ async function loadRoster() {
     for (const n of names) dl.appendChild(new Option(n));
     state.roster = names;
     renderCommanderChips();
+    renderRosterGrid($("#commanderInput").value);
   } catch (_) { /* suggestions are a nicety, not a requirement */ }
 }
 
@@ -428,11 +490,13 @@ function boot() {
   renderBadges();
   syncTemplates();
   renderCommanderChips();
+  renderRosterGrid("");
 
   $("#unlockBtn").addEventListener("click", unlock);
   $("#pwInput").addEventListener("keydown", (e) => { if (e.key === "Enter") unlock(); });
   $("#templateSelect").addEventListener("change", applyTemplate);
   $("#messageInput").addEventListener("input", renderPreview);
+  $("#commanderInput").addEventListener("input", (e) => renderRosterGrid(e.target.value));
   $("#commanderAdd").addEventListener("click", () => addCommander($("#commanderInput").value));
   $("#commanderInput").addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); addCommander(e.target.value); }
@@ -451,12 +515,13 @@ function boot() {
     $("#messageInput").value = "";
     setStatus($("#postStatus"), "", "");
     renderCommanderChips();
+    renderRosterGrid("");
     renderBadges();
     syncTemplates();
     renderPreview();
   });
 
-  loadRoster();
+  loadAvatarIndex().then(loadRoster);
 
   // Same tab, already unlocked — skip the lock screen without re-probing.
   let saved = "";
