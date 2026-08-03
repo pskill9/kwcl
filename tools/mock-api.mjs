@@ -18,6 +18,11 @@ import vm from "node:vm";
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.argv[2] || 8787);
 const SECRET = process.argv[3] || "kwcl-test";
+/* Reproduces the Apps Script failure mode seen in production: the write is
+   executed, then the response comes back 404 with HTML. Pass a number as the
+   4th arg — every Nth POST fails this way (1 = every POST). */
+const FAIL_EVERY = Number(process.argv[4] || 0);
+let postCount = 0;
 
 /* --- fake Google services (same shapes as tools/test-callouts.mjs) --- */
 function makeSheet(name, values = []) {
@@ -145,6 +150,13 @@ http.createServer((req, res) => {
     const out = sandbox.doPost({ parameter, postData: { contents: body } }).getContent();
     let tag = "";
     try { tag = JSON.parse(body).action || "insert"; } catch (_) {}
+    postCount++;
+    if (FAIL_EVERY && postCount % FAIL_EVERY === 0) {
+      // write already happened above — only the response is lost
+      console.log(`POST ${tag} -> EXECUTED, returning 404/HTML (injected)`);
+      res.writeHead(404, { ...CORS, "Content-Type": "text/html" });
+      return res.end("<!DOCTYPE html><html><body>Not Found</body></html>");
+    }
     console.log(`POST ${tag} -> ${out.slice(0, 90).replace(/\s+/g, " ")}`);
     res.writeHead(200, CORS);
     res.end(out);

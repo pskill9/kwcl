@@ -65,6 +65,29 @@ async function apiPost(body) {
   return res.json();
 }
 
+/* Apps Script intermittently answers a perfectly good POST with 404 and an
+   HTML body: the write lands, the response does not. Retrying blindly would
+   post the callout twice, so a lost response is resolved by reading the sheet
+   back — the same discipline push.py uses for the daily snapshot.
+
+   `verify` returns true when the intended effect is visible in the sheet. A
+   definitive refusal (unauthorized, validation error) is returned as-is; only
+   a lost response is retried. */
+async function postThenVerify(body, verify, tries = 3) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < tries; attempt++) {
+    try {
+      const res = await apiPost(body);
+      if (res && (res.ok || res.error)) return res;   // the server answered
+    } catch (e) { lastErr = e; }
+
+    try { if (await verify()) return { ok: true, recovered: true }; } catch (_) {}
+
+    if (attempt < tries - 1) await new Promise((r) => setTimeout(r, 1200 * (attempt + 1)));
+  }
+  throw lastErr || new Error("could not confirm the write");
+}
+
 /* ------------------------------------------------------------ shared shape */
 
 function calloutExpiry(v) {
@@ -360,7 +383,10 @@ async function unlock() {
      "(admin unlock check)" row in Shoutouts on every single login. The
      attempt is recorded in the Admin Log tab instead. */
   try {
-    const res = await apiPost({ action: "callout_check", secret: pw, who: "admin.html" });
+    // only writes an Admin Log line, so retrying a lost response is harmless
+    const res = await postThenVerify(
+      { action: "callout_check", secret: pw, who: "admin.html" },
+      async () => false);
     if (!res.ok) {
       setStatus($("#lockStatus"),
         res.error === "unauthorized" ? "Password rejected." : ("Refused: " + res.error), "err");
@@ -392,11 +418,19 @@ async function postCallout() {
 
   $("#postBtn").disabled = true;
   setStatus($("#postStatus"), "Posting…", "");
+  const commander = d.names.join(NAME_SEP);
+  const sentAt = Date.now();
   try {
-    const res = await apiPost({
+    const res = await postThenVerify({
       action: "callout", secret: state.password, type: d.type,
-      commander: d.names.join(NAME_SEP), badge: d.badge,
+      commander: commander, badge: d.badge,
       message: d.message, hours: d.hours, author: d.author,
+    }, async () => {
+      const json = await apiGet({ action: "data", sheet: SHEET });
+      return (json.data || []).some((r) =>
+        String(r.Message == null ? "" : r.Message).trim() === d.message &&
+        String(r.Commander == null ? "" : r.Commander).trim() === commander &&
+        Date.parse(String(r.Created || "")) >= sentAt - 120000);
     });
     if (!res.ok) {
       setStatus($("#postStatus"), res.error === "unauthorized" ? "Password rejected." : ("Refused: " + res.error), "err");
@@ -424,7 +458,14 @@ async function removeCallout(c, btn) {
   btn.disabled = true;
   btn.textContent = "Removing…";
   try {
-    const res = await apiPost({ action: "callout_expire", secret: state.password, id: c.id });
+    const res = await postThenVerify(
+      { action: "callout_expire", secret: state.password, id: c.id },
+      async () => {
+        const json = await apiGet({ action: "data", sheet: SHEET });
+        const row = (json.data || []).find((r) => String(r.Id).trim() === c.id);
+        const exp = row ? calloutExpiry(row.Expires) : null;
+        return exp !== null && exp <= Date.now();
+      });
     if (!res.ok) { btn.disabled = false; btn.textContent = "Remove now"; setStatus($("#postStatus"), "Refused: " + res.error, "err"); return; }
     await loadActive();
   } catch (e) {
