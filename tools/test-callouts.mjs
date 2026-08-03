@@ -152,9 +152,9 @@ console.log("\nCode.gs callout behaviour\n");
   post(sandbox, ss, { secret: "s", type: "announcement", message: "first", hours: 24 });
   const sh = ss.getSheetByName("Shoutouts");
   check("Shoutouts tab created on first write", sh !== null);
-  const headers = sh.getRange(1, 1, 1, 7).getValues()[0];
+  const headers = sh.getRange(1, 1, 1, 8).getValues()[0];
   check("headers written", JSON.stringify(headers) ===
-    JSON.stringify(["Id", "Type", "Commander", "Message", "Created", "Expires", "Author"]),
+    JSON.stringify(["Id", "Type", "Commander", "Badge", "Message", "Created", "Expires", "Author"]),
     JSON.stringify(headers));
   check("one data row", sh.getLastRow() === 2, "rows=" + sh.getLastRow());
 }
@@ -198,6 +198,41 @@ console.log("\nCode.gs callout behaviour\n");
   check("200 rapid ids are all distinct", new Set(burst).size === 200, "distinct=" + new Set(burst).size);
 }
 
+/* --- badges and group shoutouts --- */
+{
+  const { sandbox, ss } = loadCodeGs({ secret: "s" });
+
+  const badged = post(sandbox, ss, {
+    secret: "s", type: "shoutout", commander: "피자감자",
+    badge: "healer", message: "patched everyone up", hours: 24,
+  });
+  check("badge is stored", badged.badge === "healer", JSON.stringify(badged));
+
+  const noBadge = post(sandbox, ss, {
+    secret: "s", type: "shoutout", commander: "Makpy", message: "nice", hours: 24,
+  });
+  check("badge is optional", noBadge.ok === true && noBadge.badge === "", JSON.stringify(noBadge));
+
+  const group = post(sandbox, ss, {
+    secret: "s", type: "shoutout",
+    commander: "피자감자, Blackcavalier, 쿠리 Kuri",
+    badge: "treasure", message: "cleared the whole event together", hours: 48,
+  });
+  check("group shoutout accepted", group.ok === true, JSON.stringify(group));
+
+  const back = sandbox.getData(ss, { sheet: "Shoutouts" }).data
+    .find((r) => r.Id === group.id);
+  const names = String(back.Commander).split(",").map((x) => x.trim()).filter(Boolean);
+  check("all three names survive the round trip", names.length === 3, JSON.stringify(names));
+  check("a name containing a space is intact", names.includes("쿠리 Kuri"), JSON.stringify(names));
+  check("a Korean name is intact", names.includes("피자감자"), JSON.stringify(names));
+  check("badge column readable via getData", String(back.Badge) === "treasure", String(back.Badge));
+
+  // the guard still fires when no name at all is given
+  const empty = post(sandbox, ss, { secret: "s", type: "shoutout", commander: "  ", message: "x", hours: 1 });
+  check("whitespace-only commander still refused", empty.ok === false, JSON.stringify(empty));
+}
+
 /* --- expiry --- */
 {
   const { sandbox, ss } = loadCodeGs({ secret: "s" });
@@ -211,8 +246,9 @@ console.log("\nCode.gs callout behaviour\n");
   check("stamped time is now-ish", Math.abs(new Date(gone.expires) - Date.now()) < 5000, gone.expires);
 
   const sh = ss.getSheetByName("Shoutouts");
-  const row = sh.getRange(2, 1, 1, 7).getValues()[0];
-  check("Expires column actually rewritten", String(row[5]) === gone.expires, JSON.stringify(row));
+  const row = sh.getRange(2, 1, 1, 8).getValues()[0];
+  const expIdx = 6;   // Id, Type, Commander, Badge, Message, Created, Expires, Author
+  check("Expires column actually rewritten", String(row[expIdx]) === gone.expires, JSON.stringify(row));
 
   const missing = sandbox.expireCallout(ss, { secret: "s", id: "s_does_not_exist" });
   check("unknown id reports not found", missing.ok === false && /not found/.test(missing.error), JSON.stringify(missing));

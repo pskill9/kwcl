@@ -277,6 +277,18 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 0 20px 40px; }
   background: var(--surface-2); border: 1px solid var(--grid);
   font-family: var(--font-stencil); font-size: 22px; color: var(--taegeuk-red);
 }
+/* faces overlap slightly so a group of six still fits beside the text */
+.callout-faces { display: flex; flex: none; }
+.callout-faces > * { margin-left: -12px; border: 2px solid var(--surface); border-radius: 10px; }
+.callout-faces > *:first-child { margin-left: 0; }
+.callout-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 9px 2px 6px; border-radius: 999px;
+  background: var(--surface-2); border: 1px solid var(--grid);
+  font-family: var(--font-num); font-weight: 600; font-size: 11.5px;
+  letter-spacing: 0.4px; color: var(--ink-2);
+}
+.callout-badge-icon { font-size: 13px; line-height: 1; }
 .callout-body { min-width: 0; flex: 1; }
 .callout-head { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; margin-bottom: 5px; }
 .callout-flag {
@@ -528,6 +540,11 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 0 20px 40px; }
 }
 .field textarea { resize: vertical; min-height: 84px; line-height: 1.5; }
 .field span em { font-style: normal; text-transform: none; letter-spacing: 0; opacity: 0.7; }
+/* .field input is width:100%, which would push the Add button onto its own
+   row. Scoped to .field so the site's own compare picker is unaffected. */
+.field .picker-row input { flex: 1 1 220px; width: auto; }
+.field .picker-row { align-items: center; }
+.field .hint { margin-left: 0; }
 .admin-row { display: flex; gap: 12px; flex-wrap: wrap; }
 .admin-row .field { flex: 1 1 200px; }
 .callout-actions { flex: none; display: flex; align-items: center; }

@@ -35,8 +35,11 @@ function getApiUrl() {
 const API = (getApiUrl() || "").replace(/\/+$/, "");
 const SHEET = (CFG.callouts && CFG.callouts.sheet) || "Shoutouts";
 const TEMPLATES = (CFG.callouts && CFG.callouts.templates) || [];
+const BADGES = (CFG.callouts && CFG.callouts.badges) || [];
+const NAME_SEP = ", ";        // no commander name on record contains a comma
+const badgeByKey = (k) => BADGES.find((b) => b.key === k) || null;
 
-const state = { type: "announcement", password: "", rows: [], roster: [] };
+const state = { type: "announcement", password: "", rows: [], roster: [], names: [], badge: "" };
 
 /* ------------------------------------------------------------ transport */
 
@@ -70,11 +73,17 @@ function calloutExpiry(v) {
   return isNaN(t) ? 0 : t;
 }
 
+/** "a, b" -> ["a","b"]; tolerates stray spacing and a trailing separator. */
+function splitNames(v) {
+  return String(v == null ? "" : v).split(",").map((s) => s.trim()).filter(Boolean);
+}
+
 function normaliseRow(r) {
   return {
     id: String(r.Id == null ? "" : r.Id).trim(),
     type: String(r.Type == null ? "" : r.Type).trim().toLowerCase() === "shoutout" ? "shoutout" : "announcement",
-    name: String(r.Commander == null ? "" : r.Commander).trim(),
+    names: splitNames(r.Commander),
+    badge: String(r.Badge == null ? "" : r.Badge).trim(),
     message: String(r.Message == null ? "" : r.Message).trim(),
     created: String(r.Created == null ? "" : r.Created).trim(),
     expires: calloutExpiry(r.Expires),
@@ -100,12 +109,29 @@ function adminAvatar(name) {
 
 function calloutCard(c, opts = {}) {
   const card = el("div", "callout callout-" + c.type);
-  card.appendChild(c.type === "shoutout" && c.name ? adminAvatar(c.name) : el("div", "callout-icon", "!"));
+
+  // one avatar per named commander, so a group shoutout reads as a group
+  if (c.type === "shoutout" && c.names.length) {
+    const stack = el("div", "callout-faces");
+    for (const n of c.names.slice(0, 6)) stack.appendChild(adminAvatar(n));
+    card.appendChild(stack);
+  } else {
+    card.appendChild(el("div", "callout-icon", "!"));
+  }
 
   const body = el("div", "callout-body");
   const head = el("div", "callout-head");
   head.appendChild(el("span", "callout-flag", c.type === "shoutout" ? "Shoutout" : "Announcement"));
-  if (c.type === "shoutout" && c.name) head.appendChild(el("span", "callout-name", c.name));
+  if (c.type === "shoutout" && c.names.length) {
+    head.appendChild(el("span", "callout-name", c.names.join(NAME_SEP)));
+  }
+  const b = badgeByKey(c.badge);
+  if (b) {
+    const chip = el("span", "callout-badge");
+    chip.appendChild(el("span", "callout-badge-icon", b.icon));
+    chip.appendChild(document.createTextNode(b.label));
+    head.appendChild(chip);
+  }
   body.appendChild(head);
 
   const msg = el("p", "callout-msg");
@@ -149,35 +175,99 @@ function renderTypeTabs() {
   segTabs($("#typeTabs"),
     [{ value: "announcement", label: "Announcement" }, { value: "shoutout", label: "Shoutout" }],
     state.type,
-    (v) => { state.type = v; renderTypeTabs(); syncTemplates(); renderPreview(); });
-  // A shoutout is about a person; an announcement is not.
-  $("#commanderField").classList.toggle("hidden", state.type !== "shoutout");
+    (v) => {
+      state.type = v;
+      renderTypeTabs();
+      syncTemplates();
+      renderPreview();
+    });
+  // commanders and badges belong to a shoutout; an announcement has neither
+  const isShout = state.type === "shoutout";
+  $("#commanderField").classList.toggle("hidden", !isShout);
+  $("#badgeField").classList.toggle("hidden", !isShout);
 }
 
-/** Show only the templates belonging to the selected type. */
+function templatesForType() {
+  return TEMPLATES.filter((t) => (t.type || "announcement") === state.type);
+}
+
+/* True while the message box still holds template text (or nothing), so
+   switching type can swap the prefill without destroying anything typed. */
+function messageIsPristine() {
+  const cur = $("#messageInput").value.trim();
+  if (!cur) return true;
+  return TEMPLATES.some((t) => (t.text || "").trim() === cur);
+}
+
+/** Populate the picker and pre-select the first template of this type. */
 function syncTemplates() {
   const sel = $("#templateSelect");
-  const mine = TEMPLATES.filter((t) => (t.type || "announcement") === state.type);
+  const mine = templatesForType();
+  const pristine = messageIsPristine();
+
   sel.innerHTML = "";
-  sel.appendChild(new Option("— blank —", ""));
   mine.forEach((t, i) => sel.appendChild(new Option(t.label || "Template " + (i + 1), String(i))));
   sel.disabled = mine.length === 0;
+
+  if (!mine.length) return;
+  sel.value = "0";
+  if (pristine) $("#messageInput").value = mine[0].text || "";
 }
 
 function applyTemplate() {
-  const mine = TEMPLATES.filter((t) => (t.type || "announcement") === state.type);
-  const i = $("#templateSelect").value;
-  if (i === "") return;
-  const t = mine[Number(i)];
+  const t = templatesForType()[Number($("#templateSelect").value)];
   if (t) $("#messageInput").value = t.text || "";
   renderPreview();
+}
+
+function renderBadges() {
+  const sel = $("#badgeSelect");
+  sel.innerHTML = "";
+  sel.appendChild(new Option("— none —", ""));
+  for (const b of BADGES) sel.appendChild(new Option(`${b.icon}  ${b.label}`, b.key));
+  sel.value = state.badge;
+}
+
+/* ---- commander chips ---- */
+
+function addCommander(raw) {
+  const name = (raw || "").trim();
+  if (!name) return;
+  // free text is allowed on purpose: non-members and ad-hoc groups still work
+  if (!state.names.includes(name)) state.names.push(name);
+  $("#commanderInput").value = "";
+  renderCommanderChips();
+  renderPreview();
+}
+
+function renderCommanderChips() {
+  const box = $("#commanderChips");
+  box.innerHTML = "";
+  for (const n of state.names) {
+    const chip = el("span", "chip", n);
+    const x = el("button", null, "×");
+    x.type = "button";
+    x.setAttribute("aria-label", "Remove " + n);
+    x.addEventListener("click", () => {
+      state.names = state.names.filter((m) => m !== n);
+      renderCommanderChips();
+      renderPreview();
+    });
+    chip.appendChild(x);
+    box.appendChild(chip);
+  }
+  const known = state.names.filter((n) => state.roster.includes(n)).length;
+  $("#commanderHint").textContent = state.names.length
+    ? `${state.names.length} selected · ${known} from the roster`
+    : "Add as many as the shoutout covers — press Enter to add.";
 }
 
 function draft() {
   const hours = Number($("#durationSelect").value);
   return {
     type: state.type,
-    name: $("#commanderInput").value.trim(),
+    names: state.type === "shoutout" ? state.names.slice() : [],
+    badge: state.type === "shoutout" ? state.badge : "",
     message: $("#messageInput").value.trim(),
     author: $("#authorInput").value.trim(),
     expires: hours > 0 ? Date.now() + hours * 3600 * 1000 : null,
@@ -242,23 +332,28 @@ function enterAdmin() {
 async function postCallout() {
   const d = draft();
   if (!d.message) { setStatus($("#postStatus"), "Write a message first.", "err"); return; }
-  if (d.type === "shoutout" && !d.name) { setStatus($("#postStatus"), "A shoutout needs a commander.", "err"); return; }
+  if (d.type === "shoutout" && !d.names.length) { setStatus($("#postStatus"), "A shoutout needs at least one commander.", "err"); return; }
 
   $("#postBtn").disabled = true;
   setStatus($("#postStatus"), "Posting…", "");
   try {
     const res = await apiPost({
       action: "callout", secret: state.password, type: d.type,
-      commander: d.name, message: d.message, hours: d.hours, author: d.author,
+      commander: d.names.join(NAME_SEP), badge: d.badge,
+      message: d.message, hours: d.hours, author: d.author,
     });
     if (!res.ok) {
       setStatus($("#postStatus"), res.error === "unauthorized" ? "Password rejected." : ("Refused: " + res.error), "err");
       return;
     }
     setStatus($("#postStatus"), "Posted. It is live on the site now.", "ok");
-    $("#messageInput").value = "";
+    state.names = [];
+    state.badge = "";
     $("#commanderInput").value = "";
-    $("#templateSelect").value = "";
+    $("#messageInput").value = "";        // cleared, so syncTemplates re-prefills
+    renderCommanderChips();
+    renderBadges();
+    syncTemplates();
     renderPreview();
     await loadActive();
   } catch (e) {
@@ -320,6 +415,7 @@ async function loadRoster() {
     dl.innerHTML = "";
     for (const n of names) dl.appendChild(new Option(n));
     state.roster = names;
+    renderCommanderChips();
   } catch (_) { /* suggestions are a nicety, not a requirement */ }
 }
 
@@ -329,20 +425,34 @@ function boot() {
   $("#brandMark").textContent = CFG.name || "kWcl";
 
   renderTypeTabs();
+  renderBadges();
   syncTemplates();
+  renderCommanderChips();
 
   $("#unlockBtn").addEventListener("click", unlock);
   $("#pwInput").addEventListener("keydown", (e) => { if (e.key === "Enter") unlock(); });
   $("#templateSelect").addEventListener("change", applyTemplate);
   $("#messageInput").addEventListener("input", renderPreview);
-  $("#commanderInput").addEventListener("input", renderPreview);
+  $("#commanderAdd").addEventListener("click", () => addCommander($("#commanderInput").value));
+  $("#commanderInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); addCommander(e.target.value); }
+  });
+  // picking from the datalist fires change, not Enter
+  $("#commanderInput").addEventListener("change", (e) => addCommander(e.target.value));
+  $("#badgeSelect").addEventListener("change", (e) => { state.badge = e.target.value; renderPreview(); });
   $("#authorInput").addEventListener("input", renderPreview);
   $("#durationSelect").addEventListener("change", renderPreview);
   $("#postBtn").addEventListener("click", postCallout);
   $("#reloadBtn").addEventListener("click", loadActive);
   $("#clearBtn").addEventListener("click", () => {
-    $("#messageInput").value = ""; $("#commanderInput").value = "";
-    $("#templateSelect").value = ""; setStatus($("#postStatus"), "", "");
+    state.names = [];
+    state.badge = "";
+    $("#commanderInput").value = "";
+    $("#messageInput").value = "";
+    setStatus($("#postStatus"), "", "");
+    renderCommanderChips();
+    renderBadges();
+    syncTemplates();
     renderPreview();
   });
 

@@ -362,6 +362,29 @@ function calloutActive(c, now) {
   return c.expires === null || c.expires > now;
 }
 
+/* A shoutout can cover several people, stored as "a, b, c". No commander name
+   on record contains a comma, so splitting on it is safe and the cell stays
+   readable to anyone opening the sheet. */
+function splitNames(v) {
+  return String(v == null ? "" : v).split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+function calloutBadge(key) {
+  const list = (CFG.callouts && CFG.callouts.badges) || [];
+  return list.find((b) => b.key === String(key || "").trim()) || null;
+}
+
+/* Rows cached by an earlier build carry a single `name` string instead of the
+   `names` array, and no badge. paintFromCache restores them before any network
+   call, so without this an old cache throws inside the first render — and
+   because that render is not guarded, it takes the whole boot down rather than
+   just this section. */
+function migrateCallout(c) {
+  if (c && Array.isArray(c.names)) return c;
+  const name = c && c.name ? String(c.name).trim() : "";
+  return Object.assign({}, c, { names: name ? [name] : [], badge: (c && c.badge) || "" });
+}
+
 async function loadShoutouts(base) {
   const sheet = (CFG.callouts && CFG.callouts.sheet) || "Shoutouts";
   try {
@@ -369,7 +392,8 @@ async function loadShoutouts(base) {
     const rows = (json.data || []).map((r) => ({
       id: String(r.Id == null ? "" : r.Id).trim(),
       type: String(r.Type == null ? "" : r.Type).trim().toLowerCase() === "shoutout" ? "shoutout" : "announcement",
-      name: String(r.Commander == null ? "" : r.Commander).trim(),
+      names: splitNames(r.Commander),
+      badge: String(r.Badge == null ? "" : r.Badge).trim(),
       message: String(r.Message == null ? "" : r.Message).trim(),
       created: String(r.Created == null ? "" : r.Created).trim(),
       expires: calloutExpiry(r.Expires),
@@ -392,7 +416,7 @@ function renderShoutouts() {
   // callout vanish on a return visit instead of flashing before the network
   // answers.
   const now = Date.now();
-  const active = SHOUTOUTS.filter((c) => calloutActive(c, now));
+  const active = SHOUTOUTS.map(migrateCallout).filter((c) => calloutActive(c, now));
 
   list.innerHTML = "";
   if (!active.length) { section.classList.add("hidden"); return; }
@@ -402,8 +426,10 @@ function renderShoutouts() {
   for (const c of active) {
     const card = el("div", "callout callout-" + c.type);
 
-    if (c.type === "shoutout" && c.name) {
-      card.appendChild(avatarEl(c.name, 46));
+    if (c.type === "shoutout" && c.names.length) {
+      const stack = el("div", "callout-faces");
+      for (const n of c.names.slice(0, 6)) stack.appendChild(avatarEl(n, 46));
+      card.appendChild(stack);
     } else {
       card.appendChild(el("div", "callout-icon", "!"));
     }
@@ -412,7 +438,16 @@ function renderShoutouts() {
     const head = el("div", "callout-head");
     head.appendChild(el("span", "callout-flag",
       STR(c.type === "shoutout" ? "shoutoutFlag" : "announcementFlag")));
-    if (c.type === "shoutout" && c.name) head.appendChild(el("span", "callout-name", c.name));
+    if (c.type === "shoutout" && c.names.length) {
+      head.appendChild(el("span", "callout-name", c.names.join(", ")));
+    }
+    const badge = calloutBadge(c.badge);
+    if (badge) {
+      const chip = el("span", "callout-badge");
+      chip.appendChild(el("span", "callout-badge-icon", badge.icon));
+      chip.appendChild(document.createTextNode(badge.label));
+      head.appendChild(chip);
+    }
     body.appendChild(head);
 
     // Admins type multi-line messages; keep the line breaks without ever
@@ -1501,7 +1536,9 @@ function renderTiers() {
 function renderAll() {
   renderHero();
   renderAllianceChart();
-  renderShoutouts();
+  // an unexpected shape in one hand-edited row should cost this section, not
+  // the whole page — every later render lives below this call
+  try { renderShoutouts(); } catch (e) { console.error("shoutouts render failed:", e); }
   renderNewcomers();
   renderHallOfFame();
   renderMovers();
@@ -1520,7 +1557,7 @@ function renderAll() {
 function paintFromCache() {
   const cache = readCache();
   if (cache.hof && cache.hof.length) { HOF.length = 0; HOF.push(...cache.hof); }
-  if (cache.shoutouts && cache.shoutouts.length) { SHOUTOUTS.length = 0; SHOUTOUTS.push(...cache.shoutouts); }
+  if (cache.shoutouts && cache.shoutouts.length) { SHOUTOUTS.length = 0; SHOUTOUTS.push(...cache.shoutouts.map(migrateCallout)); }
   const days = Object.values(cache.days || {})
     .filter((d) => d && d.date && Array.isArray(d.rows) && d.rows.length);
   if (!days.length) return false;

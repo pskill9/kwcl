@@ -462,7 +462,11 @@ function testGetAll() {
 // `hours` omitted (or 0) means "until removed" — Expires is left blank.
 
 var CALLOUT_SHEET = 'Shoutouts';
-var CALLOUT_HEADERS = ['Id', 'Type', 'Commander', 'Message', 'Created', 'Expires', 'Author'];
+// Commander holds one name, or several joined by ', ' when a shoutout covers a
+// group. No commander name on record contains a comma, and the joined form
+// stays readable to anyone opening the sheet.
+// Badge is an optional key from config.callouts.badges (e.g. 'healer').
+var CALLOUT_HEADERS = ['Id', 'Type', 'Commander', 'Badge', 'Message', 'Created', 'Expires', 'Author'];
 
 /**
  * True only when a non-empty CALLOUT_SECRET is configured AND matches.
@@ -538,6 +542,7 @@ function postCallout(ss, params) {
     'Id': id,
     'Type': type,
     'Commander': commander,
+    'Badge': String(params.badge == null ? '' : params.badge).trim(),
     'Message': message,
     'Created': now.toISOString(),
     'Expires': expires ? expires.toISOString() : '',
@@ -555,6 +560,7 @@ function postCallout(ss, params) {
     id: id,
     type: type,
     commander: commander,
+    badge: valueFor['Badge'],
     expires: expires ? expires.toISOString() : null,
     rowNumber: sh.getLastRow()
   };

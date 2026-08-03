@@ -59,11 +59,21 @@
         <select id="templateSelect" class="select"></select>
       </label>
 
-      <label class="field" id="commanderField">
-        <span>Commander</span>
-        <input type="search" id="commanderInput" list="rosterList" spellcheck="false"
-               placeholder="Pick from the roster, or type any name…">
-        <datalist id="rosterList"></datalist>
+      <div class="field" id="commanderField">
+        <span>Commanders</span>
+        <div class="chips" id="commanderChips"></div>
+        <div class="picker-row">
+          <input type="search" id="commanderInput" list="rosterList" spellcheck="false"
+                 placeholder="Pick from the roster, or type any name…">
+          <datalist id="rosterList"></datalist>
+          <button type="button" class="btn-ghost" id="commanderAdd">Add</button>
+        </div>
+        <p class="hint" id="commanderHint">Add as many as the shoutout covers — press Enter to add.</p>
+      </div>
+
+      <label class="field" id="badgeField">
+        <span>Badge <em>(optional)</em></span>
+        <select id="badgeSelect" class="select"></select>
       </label>
 
       <label class="field">

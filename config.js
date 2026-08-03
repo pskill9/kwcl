@@ -52,6 +52,9 @@ window.ALLIANCE_CONFIG = {
      property CALLOUT_SECRET, which the browser never sees. */
   callouts: {
     sheet: "Shoutouts",
+
+    /* The first template of each type is pre-selected in the composer, so
+       posting is one edit away. Add, reword or reorder freely. */
     templates: [
       {
         type: "announcement",
@@ -59,10 +62,34 @@ window.ALLIANCE_CONFIG = {
         text: "Alliance event — \nWhen: \nWhat to do: ",
       },
       {
+        type: "announcement",
+        label: "Reminder",
+        text: "Reminder — \nDeadline: ",
+      },
+      {
         type: "shoutout",
         label: "Great performance",
         text: "Outstanding work this week — ",
       },
+      {
+        type: "shoutout",
+        label: "Thanks for the help",
+        text: "Thank you for stepping in — ",
+      },
+    ],
+
+    /* Badges an admin can pin to a shoutout. `key` is what gets stored in the
+       sheet, so renaming a label is safe but changing a key orphans the badge
+       on older rows (they simply render without one). Icons are plain emoji —
+       no assets to ship. */
+    badges: [
+      { key: "treasure",    icon: "💰", label: "Treasure" },
+      { key: "extinguisher", icon: "🧯", label: "Fire extinguisher" },
+      { key: "helper",      icon: "🤝", label: "Helper" },
+      { key: "healer",      icon: "💚", label: "Healer" },
+      { key: "defender",    icon: "🛡️", label: "Defender" },
+      { key: "rally",       icon: "⚔️", label: "Rally lead" },
+      { key: "builder",     icon: "🏗️", label: "Builder" },
     ],
   },
 
