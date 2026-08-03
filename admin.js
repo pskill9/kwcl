@@ -39,7 +39,7 @@ const BADGES = (CFG.callouts && CFG.callouts.badges) || [];
 const NAME_SEP = ", ";        // no commander name on record contains a comma
 const badgeByKey = (k) => BADGES.find((b) => b.key === k) || null;
 
-const state = { type: "announcement", password: "", rows: [], roster: [], names: [], badge: "" };
+const state = { type: "shoutout", password: "", rows: [], roster: [], names: [], badge: "" };
 
 /* ------------------------------------------------------------ transport */
 
@@ -218,7 +218,7 @@ function segTabs(container, options, selected, onPick) {
 
 function renderTypeTabs() {
   segTabs($("#typeTabs"),
-    [{ value: "announcement", label: "Announcement" }, { value: "shoutout", label: "Shoutout" }],
+    [{ value: "shoutout", label: "Shoutout" }, { value: "announcement", label: "Announcement" }],
     state.type,
     (v) => {
       state.type = v;
