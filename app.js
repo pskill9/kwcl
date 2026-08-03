@@ -232,7 +232,13 @@ function saveCache(part) {
    rows, so the shape is what we check, not the HTTP status. */
 async function loadBulk(base, since) {
   const url = base + "?action=all&limit=" + MAX_SNAPSHOTS + (since ? "&since=" + since : "");
-  const json = await fetchJson(url);
+  /* Three retries rather than the default one. Apps Script intermittently
+     answers with 404/HTML, and a cold start can outrun the 30s timeout — both
+     transient and independent between attempts, so a later try usually lands
+     (and the cold call warms the script for the next one). Giving up here
+     drops a first-time visitor, who has no cache to fall back on, all the way
+     to demo numbers. */
+  const json = await fetchJson(url, 30000, 3);
   return json && Array.isArray(json.dates) && Array.isArray(json.members) ? json : null;
 }
 
