@@ -198,6 +198,34 @@ console.log("\nCode.gs callout behaviour\n");
   check("200 rapid ids are all distinct", new Set(burst).size === 200, "distinct=" + new Set(burst).size);
 }
 
+/* --- login check writes to Admin Log, never to Shoutouts --- */
+{
+  const { sandbox, ss } = loadCodeGs({ secret: "s" });
+
+  const good = sandbox.checkCallout(ss, { secret: "s", who: "admin.html" });
+  check("correct secret passes the check", good.ok === true, JSON.stringify(good));
+  check("check creates NO Shoutouts tab", ss.getSheetByName("Shoutouts") === null);
+
+  const log = ss.getSheetByName("Admin Log");
+  check("Admin Log tab created", log !== null);
+  const headers = log.getRange(1, 1, 1, 4).getValues()[0];
+  check("Admin Log headers", JSON.stringify(headers) ===
+    JSON.stringify(["Time", "Event", "Result", "Detail"]), JSON.stringify(headers));
+  const row = log.getRange(2, 1, 1, 4).getValues()[0];
+  check("success logged as ok", row[1] === "login" && row[2] === "ok", JSON.stringify(row));
+
+  const bad = sandbox.checkCallout(ss, { secret: "nope" });
+  check("wrong secret fails the check", bad.ok === false && bad.error === "unauthorized", JSON.stringify(bad));
+  const denied = log.getRange(3, 1, 1, 4).getValues()[0];
+  check("denied attempt is logged too", denied[2] === "denied", JSON.stringify(denied));
+  check("still no Shoutouts tab after a denied login", ss.getSheetByName("Shoutouts") === null);
+
+  // posting a callout must still not touch the log tab's row count unexpectedly
+  post(sandbox, ss, { secret: "s", type: "announcement", message: "real one", hours: 1 });
+  check("posting still writes to Shoutouts", ss.getSheetByName("Shoutouts") !== null);
+  check("Admin Log untouched by a post", log.getLastRow() === 3, "rows=" + log.getLastRow());
+}
+
 /* --- badges and group shoutouts --- */
 {
   const { sandbox, ss } = loadCodeGs({ secret: "s" });

@@ -355,27 +355,23 @@ async function unlock() {
 
   setStatus($("#lockStatus"), "Checking…", "");
 
-  /* There is no "verify password" endpoint by design — the only thing that can
-     confirm the secret is a real write. So this posts a callout that expires
-     immediately, then removes it: a wrong password is refused before anything
-     is written, and a right one leaves nothing visible on the site. */
+  /* A dedicated check that writes nothing to the callout tab. This used to
+     post a real callout and immediately expire it, which left an
+     "(admin unlock check)" row in Shoutouts on every single login. The
+     attempt is recorded in the Admin Log tab instead. */
   try {
-    const probe = await apiPost({
-      action: "callout", secret: pw, type: "announcement",
-      message: "(admin unlock check)", hours: 0,
-    });
-    if (!probe.ok) {
+    const res = await apiPost({ action: "callout_check", secret: pw, who: "admin.html" });
+    if (!res.ok) {
       setStatus($("#lockStatus"),
-        probe.error === "unauthorized" ? "Password rejected." : ("Refused: " + probe.error), "err");
+        res.error === "unauthorized" ? "Password rejected." : ("Refused: " + res.error), "err");
       return;
     }
-    await apiPost({ action: "callout_expire", secret: pw, id: probe.id });
-
     state.password = pw;
     try { sessionStorage.setItem(PW_KEY, pw); } catch (_) {}
     enterAdmin();
   } catch (e) {
-    setStatus($("#lockStatus"), "Could not reach the API: " + (e.message || e), "err");
+    // surface the real reason — a bare "could not reach" hid HTTP 405/404
+    setStatus($("#lockStatus"), "Could not verify: " + (e.message || e), "err");
   }
 }
 

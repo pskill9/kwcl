@@ -155,6 +155,9 @@ function doPost(e) {
     if (action === 'callout_expire') {
       return jsonResponse(expireCallout(ss, params));
     }
+    if (action === 'callout_check') {
+      return jsonResponse(checkCallout(ss, params));
+    }
 
     return jsonResponse(insertRow(ss, params));
   } catch (err) {
@@ -462,6 +465,11 @@ function testGetAll() {
 // `hours` omitted (or 0) means "until removed" — Expires is left blank.
 
 var CALLOUT_SHEET = 'Shoutouts';
+// Login attempts go here, NOT into Shoutouts. Verifying a password used to
+// mean posting a real callout and expiring it, which littered the callout tab
+// with "(admin unlock check)" rows on every single login.
+var ADMIN_LOG_SHEET = 'Admin Log';
+var ADMIN_LOG_HEADERS = ['Time', 'Event', 'Result', 'Detail'];
 // Commander holds one name, or several joined by ', ' when a shoutout covers a
 // group. No commander name on record contains a comma, and the joined form
 // stays readable to anyone opening the sheet.
@@ -594,6 +602,34 @@ function expireCallout(ss, params) {
     }
   }
   return { ok: false, error: 'id not found: ' + id };
+}
+
+/**
+ * Append one line to the Admin Log tab, creating it on first use.
+ * Never throws: an audit line failing must not break the action being audited.
+ */
+function logAdmin(ss, event, result, detail) {
+  try {
+    var sh = ss.getSheetByName(ADMIN_LOG_SHEET);
+    if (!sh) sh = ss.insertSheet(ADMIN_LOG_SHEET);
+    ensureHeaders(sh, ADMIN_LOG_HEADERS);
+    sh.appendRow([new Date().toISOString(), event, result,
+                  String(detail == null ? '' : detail).slice(0, 200)]);
+  } catch (e) { /* logging is best-effort */ }
+}
+
+/**
+ * Verify the password WITHOUT writing anything to the callout tab.
+ *
+ * Denied attempts are logged too — with no rate limiting in front of this
+ * endpoint, a run of failures in the log is the only visible sign of someone
+ * guessing at the password.
+ */
+function checkCallout(ss, params) {
+  var ok = calloutSecretOk(params.secret);
+  logAdmin(ss, 'login', ok ? 'ok' : 'denied',
+           String(params.who == null ? '' : params.who).trim());
+  return ok ? { ok: true } : { ok: false, error: 'unauthorized' };
 }
 
 /** Editor sanity check. Set CALLOUT_SECRET first, then edit the secret below. */
