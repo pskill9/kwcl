@@ -183,13 +183,32 @@ console.log("\nCode.gs callout behaviour\n");
   check("no hours => blank Expires (until removed)", forever.ok === true && forever.expires === null,
     JSON.stringify(forever));
 
-  const weird = post(sandbox, ss, { secret: "s", type: "nonsense", message: "x", hours: 1 });
-  check("unknown type falls back to announcement", weird.type === "announcement", JSON.stringify(weird));
+  /* Types beyond shoutout/announcement are one-tap alert keys, and those live
+     in config.js — which this script cannot see. So any safe slug is stored
+     as-is and the CLIENT decides whether it is an alert it knows about. That
+     is why "nonsense" survives here rather than degrading: adding an alert
+     must never require editing the backend.
+
+     The slug rule is therefore the only guard, so it is what gets tested. */
+  const slug = post(sandbox, ss, { secret: "s", type: "beast_lair", message: "x", hours: 1 });
+  check("a safe slug is preserved for the client to interpret",
+    slug.type === "beast_lair", JSON.stringify(slug));
+
+  for (const [label, bad] of [
+    ["spaces", "a b"], ["injection", "<script>"], ["leading digit", "1bad"],
+    ["over-long", "x".repeat(25)], ["empty-ish", "   "],
+  ]) {
+    const r = post(sandbox, ss, { secret: "s", type: bad, message: "x", hours: 1 });
+    check(`${label} degrades to announcement`, r.type === "announcement", JSON.stringify(r));
+  }
+
+  const cased = post(sandbox, ss, { secret: "s", type: "TREASURE", message: "x", hours: 1 });
+  check("case is folded, not rejected", cased.type === "treasure", JSON.stringify(cased));
 
   const negative = post(sandbox, ss, { secret: "s", type: "announcement", message: "x", hours: -5 });
   check("negative hours treated as until-removed", negative.expires === null, JSON.stringify(negative));
 
-  const ids = new Set([shout.id, forever.id, weird.id, negative.id]);
+  const ids = new Set([shout.id, forever.id, slug.id, negative.id]);
   check("ids are distinct", ids.size === 4, [...ids].join(","));
 
   // same-millisecond burst: the collision the timestamp-only id used to have
