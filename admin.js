@@ -463,6 +463,24 @@ async function loadPushCrypto() {
   return pushCrypto;
 }
 
+/**
+ * Restate the notify choice on the Post button itself.
+ *
+ * The checkbox alone was not enough: it sat above the preview, below a roster
+ * grid a screen and a half tall, and a real callout went out with nobody
+ * notified. The button is the last thing looked at before committing, so it is
+ * the right place to say what is about to happen.
+ */
+function syncPostButton() {
+  const cb = $("#notifyCheck");
+  const btn = $("#postBtn");
+  if (!cb || !btn) return;
+  const n = state.subCount || 0;
+  btn.textContent = cb.checked && n
+    ? `Post + notify ${n} device${n === 1 ? "" : "s"}`
+    : "Post callout";
+}
+
 /** How many devices would receive a notification right now. */
 async function refreshNotifyCount() {
   const label = $("#notifyCount");
@@ -475,6 +493,7 @@ async function refreshNotifyCount() {
     label.textContent = n === 0 ? "— nobody has subscribed yet"
                       : n === 1 ? "— 1 device" : `— ${n} devices`;
     $("#notifyCheck").disabled = n === 0;
+    syncPostButton();
   } catch (_) {
     label.textContent = "";     // never let this break the composer
   }
@@ -668,6 +687,7 @@ async function postCallout() {
     renderBadges();
     syncTemplates();
     renderPreview();
+    syncPostButton();
     await loadActive();
   } catch (e) {
     setStatus($("#postStatus"), "Failed: " + (e.message || e), "err");
@@ -762,6 +782,7 @@ function boot() {
   $("#durationSelect").addEventListener("change", renderPreview);
   $("#postBtn").addEventListener("click", postCallout);
   $("#retryNotifyBtn").addEventListener("click", retryNotify);
+  $("#notifyCheck").addEventListener("change", syncPostButton);
   $("#reloadBtn").addEventListener("click", loadActive);
   $("#clearBtn").addEventListener("click", () => {
     state.names = [];

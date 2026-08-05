@@ -102,8 +102,13 @@
       <h3 class="panel-label">Preview</h3>
       <div class="callout-list" id="previewList"></div>
 
-      <!-- Off by default on purpose. The fastest way to get the whole alliance
-           to block the site is to push every routine announcement. -->
+      <p class="settings-status" id="postStatus"></p>
+
+      <!-- Off by default on purpose: pushing every routine announcement is the
+           fastest way to get the alliance to block the site. But it sits right
+           against the Post button, and the button restates the choice, because
+           this control was first placed above the preview and was simply not
+           seen — a callout went out with nobody notified. -->
       <label class="notify-row">
         <input type="checkbox" id="notifyCheck">
         <span>
@@ -112,7 +117,6 @@
         </span>
       </label>
 
-      <p class="settings-status" id="postStatus"></p>
       <div class="settings-actions">
         <button type="button" class="btn-primary" id="postBtn">Post callout</button>
         <button type="button" class="btn-ghost" id="clearBtn">Clear</button>
