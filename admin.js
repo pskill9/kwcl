@@ -395,9 +395,6 @@ async function unlock() {
     state.password = pw;
     try { sessionStorage.setItem(PW_KEY, pw); } catch (_) {}
     enterAdmin();
-    // Show coverage next to the checkbox, so "notify" is a decision
-    // taken with a number in front of it rather than a guess.
-    refreshNotifyCount();
   } catch (e) {
     // surface the real reason — a bare "could not reach" hid HTTP 405/404
     setStatus($("#lockStatus"), "Could not verify: " + (e.message || e), "err");
@@ -405,6 +402,11 @@ async function unlock() {
 }
 
 function enterAdmin() {
+  // Belongs here, not at the call site: enterAdmin has two callers — typing
+  // the password, and restoring it from sessionStorage on a revisit. Wiring
+  // this into only the first left every returning admin with a blank count
+  // and a Post button that never restated the notify choice.
+  refreshNotifyCount();
   $("#lockSection").classList.add("hidden");
   $("#composeSection").classList.remove("hidden");
   $("#activeSection").classList.remove("hidden");
