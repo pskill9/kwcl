@@ -527,7 +527,7 @@ var ADMIN_LOG_HEADERS = ['Time', 'Event', 'Result', 'Detail'];
 // stays readable to anyone opening the sheet.
 // Badge is an optional key from config.callouts.badges (e.g. 'healer').
 var CALLOUT_HEADERS = ['Id', 'Type', 'Commander', 'Badge', 'Message', 'Created', 'Expires',
-                       'Author', 'Pushed'];
+                       'Author', 'Pushed', 'PushToken'];
 
 /**
  * True only when a non-empty CALLOUT_SECRET is configured AND matches.
@@ -702,19 +702,36 @@ function pushClaim(ss, params) {
       return { ok: false, error: 'Shoutouts tab is missing Id/Pushed columns' };
     }
 
+    var tokenCol = cm.map['PushToken'];
+    var token = String(params.token == null ? '' : params.token).trim();
+
     var ids = sh.getRange(2, idCol + 1, sh.getLastRow() - 1, 1).getValues();
     for (var r = 0; r < ids.length; r++) {
       if (String(ids[r][0]).trim() !== id) continue;
 
       var row = r + 2;
       var already = String(sh.getRange(row, pushCol + 1).getValue() || '').trim();
-      if (already && !params.force) {
-        logAdmin(ss, 'push_claim', 'duplicate', id);
-        return { ok: true, claimed: false, pushedAt: already };
+      var by = tokenCol === undefined ? '' : String(sh.getRange(row, tokenCol + 1).getValue() || '').trim();
+
+      if (already) {
+        // The caller's OWN earlier attempt. This matters more than it looks:
+        // the client retries a lost POST, so attempt 1 can stamp the row and
+        // lose its response, and attempt 2 would then be told "already sent"
+        // — blocking the very notification the claim exists to protect. A
+        // claim must be idempotent for the caller that made it.
+        if (token && by && by === token) {
+          logAdmin(ss, 'push_claim', 'retry', id);
+          return { ok: true, claimed: true, pushedAt: already, repeat: true };
+        }
+        if (!params.force) {
+          logAdmin(ss, 'push_claim', 'duplicate', id);
+          return { ok: true, claimed: false, pushedAt: already };
+        }
       }
 
       var stamp = new Date().toISOString();
       sh.getRange(row, pushCol + 1).setValue(stamp);
+      if (tokenCol !== undefined) sh.getRange(row, tokenCol + 1).setValue(token);
       logAdmin(ss, 'push_claim', params.force ? 'forced' : 'ok', id);
       return { ok: true, claimed: true, pushedAt: stamp };
     }

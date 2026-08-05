@@ -575,8 +575,13 @@ async function notifySubscribers({ title, body, url, ttl }) {
  */
 async function notifyForCallout(d, commander, calloutId, force) {
   if (calloutId) {
+    // One token per notify attempt. pushPost retries a lost POST, and without
+    // this the first attempt stamps the row, loses its response, and the
+    // second is told "already sent" — so nothing goes out at all.
+    const token = (crypto.randomUUID && crypto.randomUUID()) ||
+                  String(Date.now()) + Math.random().toString(36).slice(2);
     const claim = await pushPost(
-      { action: "push_claim", secret: state.password, calloutId, force: !!force },
+      { action: "push_claim", secret: state.password, calloutId, token, force: !!force },
       (r) => typeof r.claimed === "boolean");
     if (!claim.ok) throw new Error(claim.error || "could not claim the callout");
     if (!claim.claimed) return { sent: 0, failed: 0, disabled: 0, total: 0, already: true };

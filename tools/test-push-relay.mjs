@@ -573,5 +573,35 @@ console.log("\nPushed column added to an existing tab");
   check("a second claim is refused", sandbox.pushClaim(ss, { secret: SECRET, calloutId: "s_old_1" }).claimed === false);
 }
 
+console.log("\nclaim is idempotent for its own retry");
+{
+  // This is the bug that lost a real notification: pushPost retries a lost
+  // POST, attempt 1 stamped the row and its reply vanished, attempt 2 was told
+  // "already sent", and nothing went out at all.
+  const { sandbox, ss } = loadCodeGs();
+  const posted = sandbox.postCallout(ss, { secret: SECRET, type: "announcement", message: "Rally", hours: 6 });
+  const tok = "tok-abc";
+
+  const a = sandbox.pushClaim(ss, { secret: SECRET, calloutId: posted.id, token: tok });
+  check("first attempt claims", a.claimed === true && !a.repeat);
+
+  const b = sandbox.pushClaim(ss, { secret: SECRET, calloutId: posted.id, token: tok });
+  check("the SAME token still claims (a retry, not a duplicate)", b.claimed === true, JSON.stringify(b));
+  check("and is marked as a repeat", b.repeat === true);
+  eq("keeping the original timestamp", b.pushedAt, a.pushedAt);
+
+  const c = sandbox.pushClaim(ss, { secret: SECRET, calloutId: posted.id, token: "tok-different" });
+  check("a DIFFERENT token is refused", c.claimed === false, JSON.stringify(c));
+
+  const d = sandbox.pushClaim(ss, { secret: SECRET, calloutId: posted.id });
+  check("no token at all is refused", d.claimed === false);
+
+  const e = sandbox.pushClaim(ss, { secret: SECRET, calloutId: posted.id, token: "tok-retry-button", force: true });
+  check("Retry still forces through", e.claimed === true);
+
+  const f = sandbox.pushClaim(ss, { secret: SECRET, calloutId: posted.id, token: "tok-abc" });
+  check("the old token no longer claims once another send took over", f.claimed === false);
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
