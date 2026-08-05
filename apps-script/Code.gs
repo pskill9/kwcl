@@ -571,11 +571,16 @@ function postCallout(ss, params) {
     return { ok: false, error: 'unauthorized' };
   }
 
-  var message = String(params.message == null ? '' : params.message).trim();
-  if (!message) return { ok: false, error: 'message is required' };
-
   var type = String(params.type || 'announcement').trim().toLowerCase();
-  if (type !== 'shoutout' && type !== 'announcement') type = 'announcement';
+  if (type !== 'shoutout' && type !== 'announcement' && type !== 'treasure') {
+    type = 'announcement';
+  }
+
+  var message = String(params.message == null ? '' : params.message).trim();
+  // Treasure is a one-tap alert with nothing to compose, so it carries its own
+  // wording rather than forcing the admin to type the same line every time.
+  if (!message && type === 'treasure') message = 'Treasure has been dug.';
+  if (!message) return { ok: false, error: 'message is required' };
 
   // A shoutout with no name is just an announcement wearing the wrong hat.
   var commander = String(params.commander == null ? '' : params.commander).trim();
@@ -584,9 +589,15 @@ function postCallout(ss, params) {
   }
 
   var now = new Date();
+  // `minutes` wins when given. Treasure runs for ten minutes, and `hours`
+  // cannot express that without a fraction that reads like a typo to anyone
+  // opening the sheet.
+  var mins = Number(params.minutes);
   var hours = Number(params.hours);
-  if (isNaN(hours) || hours <= 0) hours = 0;              // 0 => until removed
-  var expires = hours > 0 ? new Date(now.getTime() + hours * 3600 * 1000) : null;
+  var ms = 0;
+  if (!isNaN(mins) && mins > 0) ms = mins * 60 * 1000;
+  else if (!isNaN(hours) && hours > 0) ms = hours * 3600 * 1000;   // 0 => until removed
+  var expires = ms > 0 ? new Date(now.getTime() + ms) : null;
 
   // Timestamp alone collides when two callouts land in the same millisecond,
   // and a duplicate id makes "remove now" expire whichever row matched first —

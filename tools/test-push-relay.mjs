@@ -603,5 +603,47 @@ console.log("\nclaim is idempotent for its own retry");
   check("the old token no longer claims once another send took over", f.claimed === false);
 }
 
+console.log("\ntreasure alert");
+{
+  const { sandbox, ss } = loadCodeGs();
+
+  // Ten minutes cannot be expressed in whole hours, which is why postCallout
+  // grew a `minutes` param rather than accepting a fraction that reads like a
+  // typo to anyone opening the sheet.
+  const t0 = Date.now();
+  const t = sandbox.postCallout(ss, { secret: SECRET, type: "treasure", minutes: 10 });
+  check("a treasure posts", t.ok, JSON.stringify(t));
+  eq("keeps its own type", t.type, "treasure");
+
+  const left = Date.parse(t.expires) - t0;
+  check("expires in about ten minutes", left > 9 * 60000 && left <= 10.5 * 60000, String(Math.round(left / 1000)) + "s");
+
+  // No commander, and no message typed by the admin — the point is one tap.
+  const noMsg = sandbox.postCallout(ss, { secret: SECRET, type: "treasure", minutes: 10 });
+  check("needs no message", noMsg.ok);
+  const row = ss.getSheetByName("Shoutouts")._grid.slice(-1)[0];
+  check("and writes default wording", /Treasure/i.test(row.join(" ")), row.join("|").slice(0, 60));
+
+  // hours must keep working exactly as before
+  const h = sandbox.postCallout(ss, { secret: SECRET, type: "announcement", message: "x", hours: 6 });
+  const hLeft = Date.parse(h.expires) - Date.now();
+  check("hours still works", hLeft > 5.9 * 3600000 && hLeft <= 6.01 * 3600000);
+
+  const forever = sandbox.postCallout(ss, { secret: SECRET, type: "announcement", message: "y", hours: 0 });
+  eq("hours=0 still means until removed", forever.expires, null);
+
+  const both = sandbox.postCallout(ss, { secret: SECRET, type: "announcement", message: "z", minutes: 5, hours: 9 });
+  const bLeft = Date.parse(both.expires) - Date.now();
+  check("minutes wins over hours when both are given", bLeft < 6 * 60000);
+
+  // An unknown type must not become a treasure by accident.
+  const weird = sandbox.postCallout(ss, { secret: SECRET, type: "nonsense", message: "q", hours: 1 });
+  eq("an unknown type falls back to announcement", weird.type, "announcement");
+
+  // Treasure is a normal callout underneath, so removing it early works.
+  const gone = sandbox.expireCallout(ss, { secret: SECRET, id: t.id });
+  check("can be removed early like any callout", gone.ok);
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

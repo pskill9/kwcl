@@ -181,6 +181,33 @@ delivery can be proved with nothing deployed. `--via relay` routes through
 `script.googleusercontent.com`, and `curl -L` returns a Drive "Page Not Found"
 page with a 404 for a request that actually succeeded.
 
+### Treasure alert (optional)
+
+One tap in `admin.html` posts a ten-minute marker to the top of the HQ page
+and pushes it to every subscriber. There is nothing to compose — the whole
+value is speed, since a dig site is only worth announcing while it is open.
+
+Underneath it is an ordinary callout with `Type` = `treasure` and a short
+expiry, so it needs no new endpoint, no new storage, and it disappears on its
+own like every other callout. Admins can still remove it early from
+"Currently showing".
+
+Two taps, actually: the first arms the button and the second sends. A single
+button that notifies the whole alliance gets hit by accident eventually, and an
+accidental treasure alert costs more than the second it saves. The armed state
+cancels itself after a few seconds.
+
+While one is running the button reports "Live on the site — 4:45 left" and
+refuses to fire again, so one dig cannot notify people twice.
+
+Everything is in `config.js` under `treasure` — how long the marker lasts, the
+icon, the wording on the site and in the notification. Set `enabled: false` and
+the button and the marker both disappear.
+
+`minutes` exists on the callout endpoint for this: ten minutes cannot be written
+in whole hours, and a fraction in the `hours` column reads like a typo to anyone
+opening the sheet.
+
 ### Commander avatars (optional)
 
 `assets/commanders/index.json` maps commander name → image path, and the roster,

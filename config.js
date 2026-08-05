@@ -45,6 +45,29 @@ window.ALLIANCE_CONFIG = {
     accentB: "#3069c9",   // taegeuk blue
   },
 
+  /* Treasure alert. One tap in admin.html posts a short-lived callout and
+     pushes it to every subscriber — no message to compose, because the whole
+     point is speed: the dig site is only worth announcing while it is still
+     there.
+
+     `minutes` is how long the marker stays on the HQ page. Keep it honest —
+     a marker still showing after the treasure is gone trains people to
+     ignore it. */
+  treasure: {
+    enabled: true,
+    minutes: 10,
+    icon: "💰",
+    label: { local: "보물", en: "Treasure" },
+    /* Shown on the site while it is live. */
+    note: "Treasure has been dug — get to it before it closes.",
+    /* The push itself. Short: this arrives on a lock screen. */
+    pushTitle: "💰 Treasure found",
+    pushBody: "Dug now — 10 minutes.",
+    /* What the admin button says, and what it asks before firing. */
+    buttonLabel: "Treasure found",
+    confirmLabel: "Yes — alert everyone",
+  },
+
   /* Browser push notifications.
 
      publicKey is the VAPID public half. It is PUBLIC by design — every

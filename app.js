@@ -394,13 +394,21 @@ function migrateCallout(c) {
   return Object.assign({}, c, { names: name ? [name] : [], badge: (c && c.badge) || "" });
 }
 
+/* Whitelist rather than a two-way guess: a row whose Type the site does not
+   recognise renders as an announcement, which is the safe default, while
+   treasure keeps its own identity instead of being flattened into one. */
+function calloutType(v) {
+  const t = String(v == null ? "" : v).trim().toLowerCase();
+  return (t === "shoutout" || t === "treasure") ? t : "announcement";
+}
+
 async function loadShoutouts(base) {
   const sheet = (CFG.callouts && CFG.callouts.sheet) || "Shoutouts";
   try {
     const json = await fetchJson(base + "?action=data&sheet=" + encodeURIComponent(sheet), 20000, 0);
     const rows = (json.data || []).map((r) => ({
       id: String(r.Id == null ? "" : r.Id).trim(),
-      type: String(r.Type == null ? "" : r.Type).trim().toLowerCase() === "shoutout" ? "shoutout" : "announcement",
+      type: calloutType(r.Type),
       names: splitNames(r.Commander),
       badge: String(r.Badge == null ? "" : r.Badge).trim(),
       message: String(r.Message == null ? "" : r.Message).trim(),
@@ -425,7 +433,11 @@ function renderShoutouts() {
   // callout vanish on a return visit instead of flashing before the network
   // answers.
   const now = Date.now();
-  const active = SHOUTOUTS.map(migrateCallout).filter((c) => calloutActive(c, now));
+  // Treasure is not a card. It has its own marker above the fold, and a
+  // duplicate of it down in the list would just add noise to something
+  // that is only live for ten minutes.
+  const active = SHOUTOUTS.map(migrateCallout)
+    .filter((c) => calloutActive(c, now) && c.type !== "treasure");
 
   list.innerHTML = "";
   if (!active.length) { section.classList.add("hidden"); return; }
@@ -1548,6 +1560,7 @@ function renderAll() {
   // an unexpected shape in one hand-edited row should cost this section, not
   // the whole page — every later render lives below this call
   try { renderShoutouts(); } catch (e) { console.error("shoutouts render failed:", e); }
+  try { renderTreasure(); } catch (e) { console.error("treasure render failed:", e); }
   renderNewcomers();
   renderHallOfFame();
   renderMovers();
@@ -1746,6 +1759,108 @@ function applyConfig() {
 }
 
 /* ------------------------------------------------------------ boot */
+/* =============================================================== treasure
+
+   A ten-minute marker, driven by the same Shoutouts rows as everything else —
+   a callout of type "treasure" with a short expiry. No new endpoint, no new
+   storage, and it expires by itself the way every other callout does.
+
+   The push notification is the real alert. This is the confirmation you look
+   at after the phone buzzes, so it has to be correct about time remaining
+   rather than merely present.
+   ============================================================================ */
+
+let treasureTimer = null;
+let treasurePoll = null;
+
+function treasureCfg() {
+  return CFG.treasure || {};
+}
+
+function activeTreasure(now) {
+  const t = treasureCfg();
+  if (!t.enabled) return null;
+  return SHOUTOUTS.map(migrateCallout)
+    .filter((c) => c.type === "treasure" && calloutActive(c, now))
+    // Newest wins if two were ever fired close together.
+    .sort((a, b) => (b.expires || 0) - (a.expires || 0))[0] || null;
+}
+
+function renderTreasure() {
+  const bar = $("#treasureBar");
+  if (!bar) return;
+
+  const t = treasureCfg();
+  const c = activeTreasure(Date.now());
+  if (!c) {
+    bar.classList.add("hidden");
+    if (treasureTimer) { clearInterval(treasureTimer); treasureTimer = null; }
+    return;
+  }
+
+  $("#treasureIcon").textContent = t.icon || "💰";
+  // Same "현지어 · ENGLISH" shape the section titles use, but read from the
+  // treasure block rather than CFG.strings, so one config edit changes both
+  // the marker and the push wording together.
+  const lbl = t.label || {};
+  $("#treasureLabel").textContent = typeof lbl === "string"
+    ? lbl
+    : (lbl.local ? lbl.local + " · " + (lbl.en || "Treasure") : (lbl.en || "Treasure"));
+  $("#treasureNote").textContent = c.message || t.note || "";
+  bar.classList.remove("hidden");
+
+  const tick = () => {
+    const left = (c.expires || 0) - Date.now();
+    if (left <= 0) {
+      // Expire on the client's own clock. Waiting for the next fetch would
+      // leave the marker up after the treasure is gone, which is exactly how
+      // people learn to stop trusting it.
+      renderTreasure();
+      return;
+    }
+    const m = Math.floor(left / 60000);
+    const sec = Math.floor((left % 60000) / 1000);
+    $("#treasureLeft").textContent = m + ":" + String(sec).padStart(2, "0");
+  };
+  tick();
+  if (treasureTimer) clearInterval(treasureTimer);
+  treasureTimer = setInterval(tick, 1000);
+}
+
+/** Read the callout tab again and re-render. Cheap: one small sheet. */
+async function refreshCallouts() {
+  const base = getApiUrl();
+  if (!base) return;
+  try {
+    await loadShoutouts(base.replace(/\/+$/, ""));
+    renderTreasure();
+    renderShoutouts();
+  renderTreasure();
+  } catch (_) { /* a failed refresh must never disturb what is on screen */ }
+}
+
+/* A treasure fired while somebody already had the page open would otherwise
+   never appear. Polling only while the tab is visible keeps that from costing
+   a request a minute for every backgrounded tab in the alliance. */
+function wireTreasureRefresh() {
+  if (!treasureCfg().enabled) return;
+
+  const start = () => {
+    if (treasurePoll) return;
+    treasurePoll = setInterval(refreshCallouts, 60000);
+  };
+  const stop = () => {
+    if (treasurePoll) { clearInterval(treasurePoll); treasurePoll = null; }
+  };
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) { stop(); return; }
+    refreshCallouts();       // catch anything fired while we were away
+    start();
+  });
+  if (!document.hidden) start();
+}
+
 /* ============================================================ push notifications
 
    One tap, no name: subscribing stores an anonymous device endpoint, and every
@@ -2021,6 +2136,7 @@ async function boot() {
   // Fire and forget: a service worker that fails to register must never stop
   // the alliance numbers from loading.
   initPush().catch((e) => console.error("Push init failed:", e));
+  wireTreasureRefresh();
 
   const base = getApiUrl();
   if (base) {
