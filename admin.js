@@ -103,12 +103,23 @@ function splitNames(v) {
   return String(v == null ? "" : v).split(",").map((s) => s.trim()).filter(Boolean);
 }
 
-/* Whitelist rather than a two-way guess: a row whose Type the site does not
-   recognise renders as an announcement, which is the safe default, while
-   treasure keeps its own identity instead of being flattened into one. */
+/* A row whose Type this site does not recognise renders as an announcement —
+   the safe default — while a configured one-tap alert keeps its own identity
+   instead of being flattened into one.
+
+   Driven by config, not a hard-coded list: removing an alert from config.js
+   should make its old rows degrade quietly rather than render a marker for
+   something the alliance no longer runs. */
+function alertKinds() {
+  return (CFG.alerts || []).filter((a) => a && a.key);
+}
+function alertFor(key) {
+  return alertKinds().find((a) => a.key === key) || null;
+}
 function calloutType(v) {
   const t = String(v == null ? "" : v).trim().toLowerCase();
-  return (t === "shoutout" || t === "treasure") ? t : "announcement";
+  if (t === "shoutout") return "shoutout";
+  return alertFor(t) ? t : "announcement";
 }
 
 function normaliseRow(r) {
@@ -174,8 +185,9 @@ function calloutCard(c, opts = {}) {
 
   const body = el("div", "callout-body");
   const head = el("div", "callout-head");
+  const kind = alertFor(c.type);
   const flag = c.type === "shoutout" ? "Shoutout"
-             : c.type === "treasure" ? ((CFG.treasure && CFG.treasure.icon) || "💰") + " Treasure"
+             : kind ? (kind.icon || "❗") + " " + ((kind.label && kind.label.en) || kind.key)
              : "Announcement";
   head.appendChild(el("span", "callout-flag", flag));
   if (c.type === "shoutout" && c.names.length) {
@@ -418,7 +430,7 @@ function enterAdmin() {
   // this into only the first left every returning admin with a blank count
   // and a Post button that never restated the notify choice.
   refreshNotifyCount();
-  renderTreasureUi();
+  renderAlertUi();
   $("#lockSection").classList.add("hidden");
   $("#composeSection").classList.remove("hidden");
   $("#activeSection").classList.remove("hidden");
@@ -477,131 +489,196 @@ async function loadPushCrypto() {
   return pushCrypto;
 }
 
-/* ==================================================== treasure alert
+/* ============================================== one-tap quick alerts
 
-   One tap posts a short-lived callout and pushes it to everyone. There is
-   nothing to compose on purpose — the whole value is speed.
+   One button per entry in config.alerts. Nothing to compose — the whole value
+   is speed, since these are only worth announcing while they are still open.
 
-   Two taps, actually. A single button that notifies the entire alliance will
-   eventually be hit by accident, and an accidental treasure alert costs more
-   than the second it saves, so the first tap only arms it.
+   Two taps, though. A single button that notifies the entire alliance will
+   eventually be hit by accident, and a false alert costs more than the second
+   it saves, so the first tap only arms it.
    ==================================================================== */
 
-const TCFG = CFG.treasure || {};
-let treasureArmed = false;
-let treasureArmTimer = null;
-let treasureTick = null;
+let armedKey = "";          // which alert is waiting for its confirming tap
+let armTimer = null;
+let alertTick = null;
+const alertCooldown = {};   // key -> timestamp the button becomes usable again
 
-/** The live treasure row, if there is one. */
-function currentTreasure() {
+/* Only long enough to swallow a double-tap. Deliberately not the length of the
+   marker: two treasures can be dug minutes apart, and locking the button for
+   the whole window would leave the second one unannounced. */
+function cooldownMs() {
+  const s = Number(CFG.alertCooldownSeconds);
+  return (s > 0 ? s : 10) * 1000;
+}
+
+/** The live row for one alert kind, if there is one. */
+function liveAlert(key) {
   const now = Date.now();
   return (state.rows || [])
-    .filter((r) => r.type === "treasure" && (r.expires === null || r.expires > now))
+    .filter((r) => r.type === key && (r.expires === null || r.expires > now))
     .sort((a, b) => (b.expires || 0) - (a.expires || 0))[0] || null;
 }
 
-function renderTreasureUi() {
-  const sec = $("#treasureSection");
-  if (!sec || !TCFG.enabled) return;
+function buildAlertPanel() {
+  const panel = $("#alertPanel");
+  const sec = $("#alertSection");
+  if (!panel || !sec) return;
+
+  const kinds = alertKinds();
+  if (!kinds.length) { sec.classList.add("hidden"); return; }
   sec.classList.remove("hidden");
 
-  const btn = $("#treasureBtn");
-  const hint = $("#treasureHint");
-  const live = currentTreasure();
+  if (panel.dataset.built === String(kinds.length)) return;
+  panel.dataset.built = String(kinds.length);
+  panel.innerHTML = "";
 
-  if (treasureTick) { clearInterval(treasureTick); treasureTick = null; }
+  for (const a of kinds) {
+    const wrap = el("div", "alert-item");
+    const btn = el("button", "btn-alert");
+    btn.type = "button";
+    btn.id = "alertBtn-" + a.key;
+    btn.addEventListener("click", () => onAlertClick(a));
+    wrap.appendChild(btn);
+    const hint = el("span", "alert-hint");
+    hint.id = "alertHint-" + a.key;
+    wrap.appendChild(hint);
+    panel.appendChild(wrap);
+  }
+}
 
-  if (live) {
-    // Firing a second alert while one is running would push the alliance twice
-    // for the same dig, so the button simply reports instead.
-    btn.disabled = true;
-    btn.classList.remove("confirm");
-    btn.textContent = TCFG.buttonLabel || "Treasure found";
-    const tick = () => {
-      const left = (live.expires || 0) - Date.now();
+function renderAlertUi() {
+  buildAlertPanel();
+  if (alertTick) { clearInterval(alertTick); alertTick = null; }
+
+  let anyLive = false;
+  for (const a of alertKinds()) {
+    const btn = $("#alertBtn-" + a.key);
+    const hint = $("#alertHint-" + a.key);
+    if (!btn) continue;
+
+    const live = liveAlert(a.key);
+    if (live) {
+      anyLive = true;
+      btn.dataset.expires = String(live.expires || 0);
+    } else {
+      delete btn.dataset.expires;
+    }
+
+    // A running marker does NOT lock the button. Treasure can be dug twice in
+    // ten minutes, and the second dig still needs announcing — firing again
+    // simply posts a fresh marker and pushes it.
+    const cooling = (alertCooldown[a.key] || 0) > Date.now();
+    btn.disabled = cooling;
+
+    const armed = armedKey === a.key;
+    btn.classList.toggle("confirm", armed);
+    btn.textContent = armed ? (a.confirmLabel || "Yes — alert everyone")
+                            : (a.buttonLabel || a.key);
+
+    if (cooling) {
+      hint.textContent = "Just sent — hold on a moment.";
+    } else if (armed) {
+      hint.textContent = "Tap again to send. Cancels itself in a few seconds.";
+    } else if (live) {
+      hint.textContent = "";        // filled by the ticker below
+    } else {
+      hint.textContent = `${a.minutes || 10}-minute marker, notifies everyone.`;
+    }
+  }
+
+  const anyCooling = alertKinds().some((a) => (alertCooldown[a.key] || 0) > Date.now());
+  if (!anyLive && !anyCooling) return;
+
+  const tick = () => {
+    let again = false;
+    for (const a of alertKinds()) {
+      const btn = $("#alertBtn-" + a.key);
+      const hint = $("#alertHint-" + a.key);
+      if (!btn) continue;
+
+      // A cooldown that just lapsed has to re-enable the button.
+      if (btn.disabled && (alertCooldown[a.key] || 0) <= Date.now()) { renderAlertUi(); return; }
+      if (btn.disabled || armedKey === a.key) { again = true; continue; }
+
+      if (!btn.dataset.expires) continue;
+      const left = Number(btn.dataset.expires) - Date.now();
       if (left <= 0) { loadActive(); return; }
       const m = Math.floor(left / 60000), s2 = Math.floor((left % 60000) / 1000);
-      hint.textContent = `Live on the site — ${m}:${String(s2).padStart(2, "0")} left`;
-    };
-    tick();
-    treasureTick = setInterval(tick, 1000);
-    return;
-  }
-
-  btn.disabled = false;
-  btn.classList.toggle("confirm", treasureArmed);
-  btn.textContent = treasureArmed
-    ? (TCFG.confirmLabel || "Yes — alert everyone")
-    : (TCFG.buttonLabel || "Treasure found");
-  hint.textContent = treasureArmed
-    ? "Tap again to send. Cancels itself in a few seconds."
-    : `Posts a ${TCFG.minutes || 10}-minute marker and notifies everyone.`;
+      hint.textContent = `Live on the site — ${m}:${String(s2).padStart(2, "0")} left · you can send another`;
+      again = true;
+    }
+    if (!again) { clearInterval(alertTick); alertTick = null; }
+  };
+  tick();
+  alertTick = setInterval(tick, 1000);
 }
 
-function disarmTreasure() {
-  treasureArmed = false;
-  if (treasureArmTimer) { clearTimeout(treasureArmTimer); treasureArmTimer = null; }
-  renderTreasureUi();
+function disarmAlert() {
+  armedKey = "";
+  if (armTimer) { clearTimeout(armTimer); armTimer = null; }
+  renderAlertUi();
 }
 
-async function onTreasureClick() {
-  if (!treasureArmed) {
-    treasureArmed = true;
+async function onAlertClick(a) {
+  if (armedKey !== a.key) {
+    armedKey = a.key;
     // Disarm on its own. A button left sitting in "confirm" is a trap for the
     // next person who walks past the laptop.
-    treasureArmTimer = setTimeout(disarmTreasure, 6000);
-    renderTreasureUi();
+    if (armTimer) clearTimeout(armTimer);
+    armTimer = setTimeout(disarmAlert, 6000);
+    renderAlertUi();
     return;
   }
 
-  disarmTreasure();
-  const btn = $("#treasureBtn");
-  btn.disabled = true;
-  setStatus($("#treasureStatus"), "Posting…", "");
+  disarmAlert();
+  alertCooldown[a.key] = Date.now() + cooldownMs();
+  const btn = $("#alertBtn-" + a.key);
+  if (btn) btn.disabled = true;
+  setStatus($("#alertStatus"), "Posting…", "");
 
-  const minutes = Number(TCFG.minutes) > 0 ? Number(TCFG.minutes) : 10;
+  const minutes = Number(a.minutes) > 0 ? Number(a.minutes) : 10;
   const sentAt = Date.now();
   let recoveredId = "";
 
   try {
     const res = await postThenVerify({
-      action: "callout", secret: state.password, type: "treasure",
-      message: TCFG.note || "Treasure has been dug.", minutes,
+      action: "callout", secret: state.password, type: a.key,
+      message: a.note || "Alert.", minutes,
       author: $("#authorInput") ? $("#authorInput").value.trim() : "",
     }, async () => {
       const json = await apiGet({ action: "data", sheet: SHEET });
       const hit = (json.data || []).find((r) =>
-        String(r.Type || "").trim().toLowerCase() === "treasure" &&
+        String(r.Type || "").trim().toLowerCase() === a.key &&
         Date.parse(String(r.Created || "")) >= sentAt - 120000);
       if (hit) recoveredId = String(hit.Id || "").trim();
       return !!hit;
     });
 
     if (!res.ok) {
-      setStatus($("#treasureStatus"),
+      setStatus($("#alertStatus"),
         res.error === "unauthorized" ? "Password rejected." : ("Refused: " + res.error), "err");
       return;
     }
 
-    // Treasure ALWAYS notifies — an unannounced treasure marker is pointless.
-    setStatus($("#treasureStatus"), "Posted. Sending notifications…", "");
+    // A quick alert ALWAYS notifies — an unannounced marker is pointless.
+    setStatus($("#alertStatus"), "Posted. Sending notifications…", "");
     const id = String(res.id || recoveredId || "");
     try {
-      const n = await notifyForCallout(
-        { type: "treasure", message: TCFG.pushBody || "", hours: minutes / 60 }, "", id);
-      setStatus($("#treasureStatus"),
+      const n = await notifyForCallout({ type: a.key, message: a.note || "" }, "", id);
+      setStatus($("#alertStatus"),
         n.none ? "Marker is live. No subscribers yet, so nobody was notified."
                : `Marker is live. Notified ${n.sent} of ${n.total} device${n.total === 1 ? "" : "s"}.`,
         "ok");
     } catch (e) {
-      setStatus($("#treasureStatus"),
+      setStatus($("#alertStatus"),
         "Marker is live on the site, but the notification failed: " + (e.message || e), "err");
     }
     await loadActive();
   } catch (e) {
-    setStatus($("#treasureStatus"), "Failed: " + (e.message || e), "err");
+    setStatus($("#alertStatus"), "Failed: " + (e.message || e), "err");
   } finally {
-    renderTreasureUi();
+    renderAlertUi();
   }
 }
 
@@ -736,13 +813,15 @@ async function notifyBody(d, commander) {
   const hours = Number(d.hours) > 0 ? Number(d.hours) : 24;
   const ttl = Math.min(hours * 3600, 86400);
 
-  if (d.type === "treasure") {
-    const t = CFG.treasure || {};
+  const kind = alertFor(d.type);
+  if (kind) {
     return notifySubscribers({
-      title: t.pushTitle || "Treasure found",
-      body: t.pushBody || d.message,
+      title: kind.pushTitle || kind.buttonLabel || "Alert",
+      body: kind.pushBody || d.message,
       url: "./",
-      ttl: Math.max(60, Math.round((Number(t.minutes) || 10) * 60)),
+      // Outlive the marker by no more than the marker itself: a notification
+      // delivered after the thing has closed is worse than none.
+      ttl: Math.max(60, Math.round((Number(kind.minutes) || 10) * 60)),
     });
   }
 
@@ -898,8 +977,8 @@ async function loadActive() {
     : "Nothing is showing on the site right now.";
 
   // The button reads its state from these rows, so it has to re-render
-  // whenever they change — including when a treasure expires on its own.
-  renderTreasureUi();
+  // whenever they change — including when an alert expires on its own.
+  renderAlertUi();
 }
 
 /** Roster names for the commander datalist. Failure is non-fatal — the input
@@ -943,7 +1022,6 @@ function boot() {
   $("#durationSelect").addEventListener("change", renderPreview);
   $("#postBtn").addEventListener("click", postCallout);
   $("#retryNotifyBtn").addEventListener("click", retryNotify);
-  $("#treasureBtn").addEventListener("click", onTreasureClick);
   $("#notifyCheck").addEventListener("change", syncPostButton);
   $("#reloadBtn").addEventListener("click", loadActive);
   $("#clearBtn").addEventListener("click", () => {

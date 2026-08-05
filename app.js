@@ -394,12 +394,23 @@ function migrateCallout(c) {
   return Object.assign({}, c, { names: name ? [name] : [], badge: (c && c.badge) || "" });
 }
 
-/* Whitelist rather than a two-way guess: a row whose Type the site does not
-   recognise renders as an announcement, which is the safe default, while
-   treasure keeps its own identity instead of being flattened into one. */
+/* A row whose Type this site does not recognise renders as an announcement —
+   the safe default — while a configured one-tap alert keeps its own identity
+   instead of being flattened into one.
+
+   Driven by config, not a hard-coded list: removing an alert from config.js
+   should make its old rows degrade quietly rather than render a marker for
+   something the alliance no longer runs. */
+function alertKinds() {
+  return (CFG.alerts || []).filter((a) => a && a.key);
+}
+function alertFor(key) {
+  return alertKinds().find((a) => a.key === key) || null;
+}
 function calloutType(v) {
   const t = String(v == null ? "" : v).trim().toLowerCase();
-  return (t === "shoutout" || t === "treasure") ? t : "announcement";
+  if (t === "shoutout") return "shoutout";
+  return alertFor(t) ? t : "announcement";
 }
 
 async function loadShoutouts(base) {
@@ -433,11 +444,11 @@ function renderShoutouts() {
   // callout vanish on a return visit instead of flashing before the network
   // answers.
   const now = Date.now();
-  // Treasure is not a card. It has its own marker above the fold, and a
-  // duplicate of it down in the list would just add noise to something
-  // that is only live for ten minutes.
+  // A one-tap alert is not a card. It has its own marker above the fold, and
+  // a duplicate down in the list would add noise to something that is only
+  // live for ten minutes.
   const active = SHOUTOUTS.map(migrateCallout)
-    .filter((c) => calloutActive(c, now) && c.type !== "treasure");
+    .filter((c) => calloutActive(c, now) && !alertFor(c.type));
 
   list.innerHTML = "";
   if (!active.length) { section.classList.add("hidden"); return; }
@@ -1560,7 +1571,7 @@ function renderAll() {
   // an unexpected shape in one hand-edited row should cost this section, not
   // the whole page — every later render lives below this call
   try { renderShoutouts(); } catch (e) { console.error("shoutouts render failed:", e); }
-  try { renderTreasure(); } catch (e) { console.error("treasure render failed:", e); }
+  try { renderAlerts(); } catch (e) { console.error("alerts render failed:", e); }
   renderNewcomers();
   renderHallOfFame();
   renderMovers();
@@ -1759,72 +1770,90 @@ function applyConfig() {
 }
 
 /* ------------------------------------------------------------ boot */
-/* =============================================================== treasure
+/* ================================================== one-tap alert markers
 
-   A ten-minute marker, driven by the same Shoutouts rows as everything else —
-   a callout of type "treasure" with a short expiry. No new endpoint, no new
-   storage, and it expires by itself the way every other callout does.
+   Treasure, lucky gift, whatever config.alerts lists. Each is an ordinary
+   callout row whose Type is the alert key, with a short expiry — no new
+   endpoint, no new storage, and it expires by itself like everything else.
 
    The push notification is the real alert. This is the confirmation you look
-   at after the phone buzzes, so it has to be correct about time remaining
+   at once the phone has buzzed, so it has to be right about time remaining
    rather than merely present.
    ============================================================================ */
 
-let treasureTimer = null;
-let treasurePoll = null;
+let alertTimer = null;
+let alertPoll = null;
 
-function treasureCfg() {
-  return CFG.treasure || {};
-}
-
-function activeTreasure(now) {
-  const t = treasureCfg();
-  if (!t.enabled) return null;
+function activeAlerts(now) {
+  const keys = alertKinds();
+  if (!keys.length) return [];
   return SHOUTOUTS.map(migrateCallout)
-    .filter((c) => c.type === "treasure" && calloutActive(c, now))
-    // Newest wins if two were ever fired close together.
-    .sort((a, b) => (b.expires || 0) - (a.expires || 0))[0] || null;
+    .filter((c) => alertFor(c.type) && calloutActive(c, now))
+    // One row per kind: a double-posted alert must not stack two markers.
+    .reduce((out, c) => {
+      const seen = out.find((x) => x.type === c.type);
+      if (!seen) out.push(c);
+      else if ((c.expires || 0) > (seen.expires || 0)) out[out.indexOf(seen)] = c;
+      return out;
+    }, [])
+    .sort((a, b) => (a.expires || 0) - (b.expires || 0));   // soonest to close, first
 }
 
-function renderTreasure() {
-  const bar = $("#treasureBar");
+function alertLabel(a) {
+  const l = a.label || {};
+  if (typeof l === "string") return l;
+  return l.local ? l.local + " · " + (l.en || a.key) : (l.en || a.key);
+}
+
+function renderAlerts() {
+  const bar = $("#alertBar");
   if (!bar) return;
 
-  const t = treasureCfg();
-  const c = activeTreasure(Date.now());
-  if (!c) {
-    bar.classList.add("hidden");
-    if (treasureTimer) { clearInterval(treasureTimer); treasureTimer = null; }
+  const live = activeAlerts(Date.now());
+  if (!live.length) {
+    bar.innerHTML = "";
+    if (alertTimer) { clearInterval(alertTimer); alertTimer = null; }
     return;
   }
 
-  $("#treasureIcon").textContent = t.icon || "💰";
-  // Same "현지어 · ENGLISH" shape the section titles use, but read from the
-  // treasure block rather than CFG.strings, so one config edit changes both
-  // the marker and the push wording together.
-  const lbl = t.label || {};
-  $("#treasureLabel").textContent = typeof lbl === "string"
-    ? lbl
-    : (lbl.local ? lbl.local + " · " + (lbl.en || "Treasure") : (lbl.en || "Treasure"));
-  $("#treasureNote").textContent = c.message || t.note || "";
-  bar.classList.remove("hidden");
+  // Rebuild only when the set of live alerts changes, so the per-second
+  // countdown never fights the DOM.
+  const sig = live.map((c) => c.type + ":" + c.expires).join("|");
+  if (bar.dataset.sig !== sig) {
+    bar.dataset.sig = sig;
+    bar.innerHTML = "";
+    for (const c of live) {
+      const a = alertFor(c.type);
+      const row = el("div", "alert-row alert-" + c.type);
+      row.appendChild(el("span", "alert-icon", a.icon || "❗"));
+      const text = el("span", "alert-text");
+      text.appendChild(el("b", null, alertLabel(a)));
+      text.appendChild(el("span", null, c.message || a.note || ""));
+      row.appendChild(text);
+      const left = el("span", "alert-left");
+      left.dataset.expires = String(c.expires || 0);
+      row.appendChild(left);
+      bar.appendChild(row);
+    }
+  }
 
   const tick = () => {
-    const left = (c.expires || 0) - Date.now();
-    if (left <= 0) {
-      // Expire on the client's own clock. Waiting for the next fetch would
-      // leave the marker up after the treasure is gone, which is exactly how
-      // people learn to stop trusting it.
-      renderTreasure();
-      return;
+    let stale = false;
+    for (const node of bar.querySelectorAll(".alert-left")) {
+      const ms = Number(node.dataset.expires) - Date.now();
+      if (ms <= 0) { stale = true; continue; }
+      const m = Math.floor(ms / 60000);
+      const s2 = Math.floor((ms % 60000) / 1000);
+      node.textContent = m + ":" + String(s2).padStart(2, "0");
     }
-    const m = Math.floor(left / 60000);
-    const sec = Math.floor((left % 60000) / 1000);
-    $("#treasureLeft").textContent = m + ":" + String(sec).padStart(2, "0");
+    // Expire on the viewer's own clock. Waiting for the next fetch would leave
+    // a marker up after the thing is gone, which is how people learn to stop
+    // trusting it.
+    if (stale) renderAlerts();
   };
   tick();
-  if (treasureTimer) clearInterval(treasureTimer);
-  treasureTimer = setInterval(tick, 1000);
+  if (alertTimer) clearInterval(alertTimer);
+  alertTimer = setInterval(tick, 1000);
 }
 
 /** Read the callout tab again and re-render. Cheap: one small sheet. */
@@ -1833,25 +1862,19 @@ async function refreshCallouts() {
   if (!base) return;
   try {
     await loadShoutouts(base.replace(/\/+$/, ""));
-    renderTreasure();
+    renderAlerts();
     renderShoutouts();
-  renderTreasure();
   } catch (_) { /* a failed refresh must never disturb what is on screen */ }
 }
 
-/* A treasure fired while somebody already had the page open would otherwise
+/* An alert fired while somebody already had the page open would otherwise
    never appear. Polling only while the tab is visible keeps that from costing
    a request a minute for every backgrounded tab in the alliance. */
-function wireTreasureRefresh() {
-  if (!treasureCfg().enabled) return;
+function wireAlertRefresh() {
+  if (!alertKinds().length) return;
 
-  const start = () => {
-    if (treasurePoll) return;
-    treasurePoll = setInterval(refreshCallouts, 60000);
-  };
-  const stop = () => {
-    if (treasurePoll) { clearInterval(treasurePoll); treasurePoll = null; }
-  };
+  const start = () => { if (!alertPoll) alertPoll = setInterval(refreshCallouts, 60000); };
+  const stop = () => { if (alertPoll) { clearInterval(alertPoll); alertPoll = null; } };
 
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) { stop(); return; }
@@ -2136,7 +2159,7 @@ async function boot() {
   // Fire and forget: a service worker that fails to register must never stop
   // the alliance numbers from loading.
   initPush().catch((e) => console.error("Push init failed:", e));
-  wireTreasureRefresh();
+  wireAlertRefresh();
 
   const base = getApiUrl();
   if (base) {

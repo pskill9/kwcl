@@ -571,15 +571,20 @@ function postCallout(ss, params) {
     return { ok: false, error: 'unauthorized' };
   }
 
+  // Beyond the two built-in kinds, any safe slug is accepted and stored as-is:
+  // one-tap alert types live in config.js, which this script never sees, so
+  // validating against a fixed list here would mean editing the backend every
+  // time the alliance adds a button. The slug rule is the whole guard — it
+  // keeps the Type column readable and rules out anything injected.
   var type = String(params.type || 'announcement').trim().toLowerCase();
-  if (type !== 'shoutout' && type !== 'announcement' && type !== 'treasure') {
-    type = 'announcement';
-  }
+  if (!/^[a-z][a-z0-9_-]{0,19}$/.test(type)) type = 'announcement';
 
   var message = String(params.message == null ? '' : params.message).trim();
-  // Treasure is a one-tap alert with nothing to compose, so it carries its own
-  // wording rather than forcing the admin to type the same line every time.
-  if (!message && type === 'treasure') message = 'Treasure has been dug.';
+  // A one-tap alert has nothing composed, so it carries its own wording rather
+  // than forcing the admin to retype the same line under time pressure.
+  if (!message && type !== 'shoutout' && type !== 'announcement') {
+    message = 'Alert.';
+  }
   if (!message) return { ok: false, error: 'message is required' };
 
   // A shoutout with no name is just an announcement wearing the wrong hat.

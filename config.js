@@ -45,28 +45,50 @@ window.ALLIANCE_CONFIG = {
     accentB: "#3069c9",   // taegeuk blue
   },
 
-  /* Treasure alert. One tap in admin.html posts a short-lived callout and
-     pushes it to every subscriber — no message to compose, because the whole
-     point is speed: the dig site is only worth announcing while it is still
-     there.
+  /* One-tap alerts.
 
-     `minutes` is how long the marker stays on the HQ page. Keep it honest —
-     a marker still showing after the treasure is gone trains people to
-     ignore it. */
-  treasure: {
-    enabled: true,
-    minutes: 10,
-    icon: "💰",
-    label: { local: "보물", en: "Treasure" },
-    /* Shown on the site while it is live. */
-    note: "Treasure has been dug — get to it before it closes.",
-    /* The push itself. Short: this arrives on a lock screen. */
-    pushTitle: "💰 Treasure found",
-    pushBody: "Dug now — 10 minutes.",
-    /* What the admin button says, and what it asks before firing. */
-    buttonLabel: "Treasure found",
-    confirmLabel: "Yes — alert everyone",
-  },
+     Each entry becomes a button in admin.html and a marker at the top of the
+     HQ page, and notifies every subscriber. Nothing to compose — the value is
+     speed, since these are only worth announcing while they are still open.
+
+     Add, reorder or remove entries freely; the code reads this list and knows
+     nothing about any particular alert. `key` is what gets written to the
+     sheet's Type column, so renaming a key orphans older rows (they simply
+     stop rendering a marker). Keep keys lowercase a-z, digits, - and _.
+
+     `minutes` is how long the marker stays up. Keep it honest — a marker
+     still showing after the thing is gone trains people to ignore it.
+
+     `cooldownSeconds` is how long the button locks after firing. It exists
+     only to swallow a double-tap; it is deliberately NOT the length of the
+     marker, because two treasures can be dug minutes apart and the second one
+     still needs announcing. */
+  alertCooldownSeconds: 10,
+
+  alerts: [
+    {
+      key: "treasure",
+      icon: "💰",
+      minutes: 10,
+      label: { local: "보물", en: "Treasure" },
+      note: "Treasure has been dug — get to it before it closes.",
+      pushTitle: "💰 Treasure found",
+      pushBody: "Dug now — 10 minutes.",
+      buttonLabel: "Treasure found",
+      confirmLabel: "Yes — alert everyone",
+    },
+    {
+      key: "gift",
+      icon: "🎁",
+      minutes: 10,
+      label: { local: "행운의 선물", en: "Lucky gift" },
+      note: "A lucky gift is open — claim it before it closes.",
+      pushTitle: "🎁 Lucky gift opened",
+      pushBody: "Open now — 10 minutes.",
+      buttonLabel: "Lucky gift opened",
+      confirmLabel: "Yes — alert everyone",
+    },
+  ],
 
   /* Browser push notifications.
 

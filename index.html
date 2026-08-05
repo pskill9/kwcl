@@ -57,16 +57,10 @@
 
 <div class="banner banner-error hidden" id="errorBanner"></div>
 
-<!-- Treasure marker. Above <main> on purpose: it is time-critical and short
-     lived, so it must not be something you scroll to find. -->
-<div class="treasure hidden" id="treasureBar" role="status" aria-live="polite">
-  <span class="treasure-icon" id="treasureIcon">💰</span>
-  <span class="treasure-text">
-    <b id="treasureLabel">Treasure</b>
-    <span id="treasureNote"></span>
-  </span>
-  <span class="treasure-left" id="treasureLeft"></span>
-</div>
+<!-- One-tap alert markers, built from config.alerts. Above <main> on purpose:
+     they are time-critical and short lived, so they must not be something you
+     scroll to find. Several can be live at once. -->
+<div class="alerts" id="alertBar" role="status" aria-live="polite"></div>
 
 <main id="app" aria-busy="true">
 

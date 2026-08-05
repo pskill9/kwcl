@@ -181,32 +181,47 @@ delivery can be proved with nothing deployed. `--via relay` routes through
 `script.googleusercontent.com`, and `curl -L` returns a Drive "Page Not Found"
 page with a 404 for a request that actually succeeded.
 
-### Treasure alert (optional)
+### Quick alerts (optional)
 
-One tap in `admin.html` posts a ten-minute marker to the top of the HQ page
-and pushes it to every subscriber. There is nothing to compose — the whole
-value is speed, since a dig site is only worth announcing while it is open.
+One tap in `admin.html` posts a short-lived marker to the top of the HQ page
+and pushes it to every subscriber. Nothing to compose — the whole value is
+speed, since treasure and lucky gifts are only worth announcing while they are
+still open.
 
-Underneath it is an ordinary callout with `Type` = `treasure` and a short
-expiry, so it needs no new endpoint, no new storage, and it disappears on its
-own like every other callout. Admins can still remove it early from
-"Currently showing".
+Each entry in `config.js` under `alerts` becomes a button and a marker. Adding
+one is a config edit, not a code change; the code reads the list and knows
+nothing about any particular alert:
 
-Two taps, actually: the first arms the button and the second sends. A single
-button that notifies the whole alliance gets hit by accident eventually, and an
-accidental treasure alert costs more than the second it saves. The armed state
-cancels itself after a few seconds.
+```js
+alerts: [
+  { key: "treasure", icon: "💰", minutes: 10,
+    label: { local: "보물", en: "Treasure" },
+    note: "…", pushTitle: "💰 Treasure found", pushBody: "Dug now — 10 minutes.",
+    buttonLabel: "Treasure found", confirmLabel: "Yes — alert everyone" },
+]
+```
 
-While one is running the button reports "Live on the site — 4:45 left" and
-refuses to fire again, so one dig cannot notify people twice.
+`key` is written to the sheet's `Type` column, so renaming one orphans older
+rows (they simply stop rendering a marker). The Apps Script accepts any
+lowercase slug and never needs editing when you add an alert — config.js is
+not something it can see.
 
-Everything is in `config.js` under `treasure` — how long the marker lasts, the
-icon, the wording on the site and in the notification. Set `enabled: false` and
-the button and the marker both disappear.
+Underneath, each is an ordinary callout with a short expiry, so there is no new
+endpoint and no new storage, and it disappears on its own like every other
+callout. Admins can still pull one early from "Currently showing".
 
-`minutes` exists on the callout endpoint for this: ten minutes cannot be written
-in whole hours, and a fraction in the `hours` column reads like a typo to anyone
-opening the sheet.
+Two taps: the first arms the button, the second sends. A single button that
+notifies the whole alliance gets hit by accident eventually, and a false alert
+costs more than the second it saves. The armed state cancels itself.
+
+A running marker does **not** lock the button — treasure can be dug twice in
+ten minutes and the second dig still needs announcing. The button locks only
+for `alertCooldownSeconds` (default 10) to swallow a double-tap, and the hint
+shows the live countdown alongside "you can send another".
+
+`minutes` exists on the callout endpoint for this: ten minutes cannot be
+written in whole hours, and a fraction in the `hours` column reads like a typo
+to anyone opening the sheet.
 
 ### Commander avatars (optional)
 
