@@ -45,6 +45,21 @@ window.ALLIANCE_CONFIG = {
     accentB: "#3069c9",   // taegeuk blue
   },
 
+  /* Browser push notifications.
+
+     publicKey is the VAPID public half. It is PUBLIC by design — every
+     visitor's browser needs it to create a subscription, so it belongs in the
+     repo. The private half lives in the Apps Script property VAPID_PRIVATE.
+
+     Never change this pair. The public key is baked into every subscription
+     any browser has ever created for this site; replacing it invalidates all
+     of them silently, with no error shown anywhere, and everyone has to
+     subscribe again. */
+  push: {
+    enabled: true,
+    publicKey: "BKCJ5L3ojpXpsafFb9rr79lU55J7WIsyydylGOwi6WCh1EVr7Rsz4TYH0EAH4T89SZoNzxigjz6ECHAsjtupfoA",
+  },
+
   /* Shoutouts — short, time-limited messages posted from admin.html.
      Reword or add templates freely; nothing here is referenced by name in
      the code. `text` is only a starting point, the admin edits it before

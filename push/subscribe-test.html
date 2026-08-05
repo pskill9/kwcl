@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>kWcl — push test bench</title>
+<!--
+  A deliberately ugly, deliberately minimal page for proving push works.
+
+  This is NOT the bell that ships on the site — that lives in the Shoutouts
+  header and looks like the rest of the HQ. This exists so that when something
+  fails, there is nothing else in the frame that could have caused it.
+
+  Serve the REPO ROOT over http://localhost (a secure context, which service
+  workers require — file:// will not work):
+
+      python3 -m http.server 8080
+      open http://localhost:8080/push/subscribe-test.html
+-->
+<style>
+  body { font: 14px/1.6 ui-monospace, Menlo, monospace; max-width: 760px;
+         margin: 40px auto; padding: 0 20px; background: #0d0d0d; color: #c3c2b7; }
+  h1 { font-size: 18px; color: #fff; letter-spacing: 2px; text-transform: uppercase; }
+  button { font: inherit; padding: 8px 14px; margin: 0 8px 8px 0; cursor: pointer;
+           background: #222220; color: #fff; border: 1px solid #3a3a38; }
+  button:disabled { opacity: .4; cursor: default; }
+  button.go { border-color: #3069c9; }
+  pre { background: #17171a; border: 1px solid #2f2f31; padding: 12px;
+        white-space: pre-wrap; word-break: break-all; font-size: 12px; }
+  .row { margin: 18px 0; }
+  .ok { color: #4fc25c; } .bad { color: #ef6a6a; } .warn { color: #d9a12a; }
+  label { display: block; margin-bottom: 4px; color: #8b8a84; font-size: 12px;
+          letter-spacing: 1px; text-transform: uppercase; }
+  input { font: inherit; padding: 7px; width: 100%; background: #17171a;
+          color: #fff; border: 1px solid #2f2f31; }
+</style>
+</head>
+<body>
+
+<h1>kWcl push test bench</h1>
+
+<div class="row" id="support"></div>
+
+<div class="row">
+  <button id="reg">1 · Register worker</button>
+  <button id="local">2 · Show a local notification</button>
+  <button id="sub" class="go">3 · Subscribe</button>
+  <button id="unsub">Unsubscribe</button>
+</div>
+
+<div class="row">
+  <label>Subscription</label>
+  <pre id="out">—</pre>
+  <button id="copy" disabled>Copy JSON</button>
+  <button id="save" disabled>Download push/subscription.json</button>
+</div>
+
+<div class="row">
+  <label>Log</label>
+  <pre id="log"></pre>
+</div>
+
+<script src="../config.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const log = (msg, cls = "") => {
+  const line = document.createElement("div");
+  if (cls) line.className = cls;
+  line.textContent = new Date().toTimeString().slice(0, 8) + "  " + msg;
+  $("log").appendChild(line);
+};
+
+const CFG = window.ALLIANCE_CONFIG || {};
+const PUBLIC_KEY = (CFG.push && CFG.push.publicKey) || "";
+
+/* ---- support report: say exactly which piece is missing, not "unsupported" */
+(function report() {
+  const bits = [
+    ["Secure context", window.isSecureContext],
+    ["Service workers", "serviceWorker" in navigator],
+    ["Push API", "PushManager" in window],
+    ["Notifications", "Notification" in window],
+    ["VAPID key in config.js", !!PUBLIC_KEY],
+  ];
+  $("support").innerHTML = bits
+    .map(([name, ok]) => `<span class="${ok ? "ok" : "bad"}">${ok ? "✓" : "✗"} ${name}</span>`)
+    .join("<br>");
+
+  if (!("Notification" in window) && /iPhone|iPad/.test(navigator.userAgent)) {
+    $("support").innerHTML +=
+      `<br><span class="warn">iOS: add this page to your Home Screen first — ` +
+      `Safari only allows push from an installed PWA.</span>`;
+  }
+})();
+
+function b64urlToBytes(s) {
+  const pad = "=".repeat((4 - (s.length % 4)) % 4);
+  const bin = atob((s + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+
+let reg = null;
+
+$("reg").onclick = async () => {
+  try {
+    // "../sw.js" puts the script at the served root, so its scope is "/" —
+    // which is what lets it control this page in /push/.
+    reg = await navigator.serviceWorker.register("../sw.js");
+    await navigator.serviceWorker.ready;
+    log("worker registered, scope " + reg.scope, "ok");
+  } catch (err) {
+    log("register failed: " + err.message, "bad");
+  }
+};
+
+/* Proves the worker can DISPLAY a notification, with no server, no keys and
+   no network in the picture. If this fails, nothing downstream can work — and
+   if it succeeds but a real push does not, the problem is delivery, not the
+   worker. Worth a button of its own. */
+$("local").onclick = async () => {
+  if (!reg) return log("register the worker first", "warn");
+  const perm = await Notification.requestPermission();
+  log("permission: " + perm, perm === "granted" ? "ok" : "bad");
+  if (perm !== "granted") return;
+  await reg.showNotification("kWcl — local test", {
+    body: "Shown by the service worker. No server involved.",
+    icon: "../assets/crest.png",
+    tag: "kwcl-local",
+  });
+  log("local notification shown", "ok");
+};
+
+$("sub").onclick = async () => {
+  if (!reg) return log("register the worker first", "warn");
+  if (!PUBLIC_KEY) return log("no VAPID public key in config.js", "bad");
+
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") {
+    return log("permission " + perm + " — a blocked site cannot be re-prompted, " +
+               "you have to clear it in site settings", "bad");
+  }
+
+  try {
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: b64urlToBytes(PUBLIC_KEY),
+    });
+
+    // Give the worker what it needs to re-register itself after a rotation.
+    navigator.serviceWorker.controller?.postMessage({
+      type: "config",
+      apiUrl: CFG.apiUrl || "",
+      publicKey: PUBLIC_KEY,
+    });
+
+    const json = JSON.stringify(sub.toJSON(), null, 2);
+    $("out").textContent = json;
+    $("copy").disabled = false;
+    $("save").disabled = false;
+    log("subscribed via " + new URL(sub.endpoint).host, "ok");
+  } catch (err) {
+    log("subscribe failed: " + err.message, "bad");
+  }
+};
+
+$("unsub").onclick = async () => {
+  if (!reg) return log("register the worker first", "warn");
+  const sub = await reg.pushManager.getSubscription();
+  if (!sub) return log("not subscribed", "warn");
+  await sub.unsubscribe();
+  $("out").textContent = "—";
+  log("unsubscribed", "ok");
+};
+
+$("copy").onclick = async () => {
+  await navigator.clipboard.writeText($("out").textContent);
+  log("copied", "ok");
+};
+
+$("save").onclick = () => {
+  const blob = new Blob([$("out").textContent], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "subscription.json";
+  a.click();
+  log("downloaded — move it to push/subscription.json", "ok");
+};
+</script>
+</body>
+</html>

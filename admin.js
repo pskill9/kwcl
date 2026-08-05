@@ -395,6 +395,9 @@ async function unlock() {
     state.password = pw;
     try { sessionStorage.setItem(PW_KEY, pw); } catch (_) {}
     enterAdmin();
+    // Show coverage next to the checkbox, so "notify" is a decision
+    // taken with a number in front of it rather than a guess.
+    refreshNotifyCount();
   } catch (e) {
     // surface the real reason — a bare "could not reach" hid HTTP 405/404
     setStatus($("#lockStatus"), "Could not verify: " + (e.message || e), "err");
@@ -411,6 +414,196 @@ function enterAdmin() {
   loadActive();
 }
 
+/* ==================================================== push notifications
+
+   The admin browser does the whole job of a push server: it fetches the VAPID
+   key, encrypts one message per subscriber, and hands the finished bytes to
+   Code.gs to POST. Apps Script cannot do the crypto (no ECDSA, no AES-GCM) and
+   this page cannot do the delivery (FCM and Apple refuse a browser-origin
+   POST — they answer the CORS preflight with no Access-Control-Allow-Origin).
+   Splitting it that way is the only route that needs no extra service.
+
+   push/crypto.js is an ES module and this file is a classic script, so it is
+   pulled in with a dynamic import the first time a notification is sent.
+   ==================================================================== */
+
+/**
+ * apiPost with retries, for the push endpoints.
+ *
+ * The callout path already has postThenVerify for this; the push calls need
+ * the same protection for the same reason. Apps Script loses POSTs two ways:
+ * an HTML 404, or a redirect that degrades to a GET so doPost never runs and
+ * the reply is doGet's default output — the first sheet, as valid JSON. Both
+ * are indistinguishable from success unless the shape is checked.
+ *
+ * `shapeOk` says what a real answer for THIS action looks like. A reply that
+ * fails it never reached doPost, so it is worth asking again. A JSON reply
+ * with ok:false is a genuine refusal and is returned immediately.
+ */
+async function pushPost(body, shapeOk, tries = 3) {
+  let last = null;
+  for (let attempt = 0; attempt < tries; attempt++) {
+    try {
+      const res = await apiPost(body);
+      if (res && res.ok === false) return res;          // a real "no"
+      if (res && (!shapeOk || shapeOk(res))) return res;
+      last = new Error("unrecognised reply from " + body.action);
+    } catch (e) { last = e; }
+    if (attempt < tries - 1) await new Promise((r) => setTimeout(r, 1200 * (attempt + 1)));
+  }
+  throw last || new Error("no answer from " + body.action);
+}
+
+const PUSH_BATCH = 20;          // keep each relay call small and retryable
+let pushCrypto = null;          // lazily imported module
+let lastNotify = null;          // context for the retry button
+
+async function loadPushCrypto() {
+  if (!pushCrypto) pushCrypto = await import("./push/crypto.js");
+  return pushCrypto;
+}
+
+/** How many devices would receive a notification right now. */
+async function refreshNotifyCount() {
+  const label = $("#notifyCount");
+  if (!label) return;
+  try {
+    const res = await pushPost({ action: "push_list", secret: state.password },
+                               (r) => typeof r.count === "number");
+    const n = res && res.ok ? res.count : 0;
+    state.subCount = n;
+    label.textContent = n === 0 ? "— nobody has subscribed yet"
+                      : n === 1 ? "— 1 device" : `— ${n} devices`;
+    $("#notifyCheck").disabled = n === 0;
+  } catch (_) {
+    label.textContent = "";     // never let this break the composer
+  }
+}
+
+/**
+ * Encrypt and send one message to every subscriber.
+ *
+ * Returns { sent, failed, disabled }. Never throws for a partial failure:
+ * reaching most of the alliance is the normal good outcome, and the count is
+ * reported honestly rather than rounded up to "done".
+ */
+async function notifySubscribers({ title, body, url, ttl }) {
+  const { buildPush, importVapidPrivateKey } = await loadPushCrypto();
+
+  const keyRes = await pushPost({ action: "push_key", secret: state.password, who: "admin" },
+                                (r) => !!r.publicKey);
+  if (!keyRes.ok) throw new Error(keyRes.error || "could not read the push key");
+
+  const listRes = await pushPost({ action: "push_list", secret: state.password },
+                                 (r) => Array.isArray(r.subs));
+  if (!listRes.ok) throw new Error(listRes.error || "could not read subscribers");
+  if (!listRes.count) return { sent: 0, failed: 0, disabled: 0, none: true };
+
+  const vapid = {
+    subject: keyRes.subject,
+    publicKey: keyRes.publicKey,
+    signingKey: await importVapidPrivateKey(keyRes.publicKey, keyRes.privateKey),
+  };
+  const payload = JSON.stringify({ title, body, url: url || "./#shoutouts" });
+
+  const items = [];
+  for (const sub of listRes.subs) {
+    try {
+      const built = await buildPush({ subscription: sub, payload, vapid, ttl });
+      items.push({ endpoint: built.endpoint, headers: built.headers, bodyB64: built.bodyB64 });
+    } catch (e) {
+      // One malformed stored subscription must not stop the other 99.
+      console.error("Could not build a push for", sub.endpoint, e);
+    }
+  }
+
+  const results = [];
+  for (let i = 0; i < items.length; i += PUSH_BATCH) {
+    const batch = items.slice(i, i + PUSH_BATCH);
+    const res = await pushPost({ action: "push_relay", secret: state.password, items: batch },
+                               (r) => Array.isArray(r.results));
+    if (res.ok && res.results) results.push(...res.results);
+  }
+
+  // Hand the statuses back so dead subscriptions get retired. Best effort: a
+  // failure here costs bookkeeping, not delivery.
+  if (results.length) {
+    try {
+      await pushPost({ action: "push_apply", secret: state.password, results },
+                     (r) => typeof r.updated === "number");
+    } catch (e) { console.error("Could not record send results:", e); }
+  }
+
+  let sent = 0, disabled = 0;
+  for (const r of results) {
+    if (r.status >= 200 && r.status <= 299) sent++;
+    if (r.status === 404 || r.status === 410) disabled++;
+  }
+  return { sent, failed: results.length - sent, disabled, total: results.length };
+}
+
+/**
+ * Build the notification text for a callout and send it — at most once.
+ *
+ * The claim is the whole point. postThenVerify retries a lost POST, which is
+ * right for a sheet write and wrong for a push: the notification already
+ * reached every phone, and a retry sends it again. push_claim stamps the
+ * callout under a script lock, so only the first attempt is allowed to send.
+ *
+ * `force` bypasses it, and only the human-operated Retry button passes it.
+ */
+async function notifyForCallout(d, commander, calloutId, force) {
+  if (calloutId) {
+    const claim = await pushPost(
+      { action: "push_claim", secret: state.password, calloutId, force: !!force },
+      (r) => typeof r.claimed === "boolean");
+    if (!claim.ok) throw new Error(claim.error || "could not claim the callout");
+    if (!claim.claimed) return { sent: 0, failed: 0, disabled: 0, total: 0, already: true };
+  }
+  return notifyBody(d, commander);
+}
+
+async function notifyBody(d, commander) {
+  const isShout = d.type === "shoutout";
+  // Tie the push lifetime to the shoutout's own: a rally call has no value six
+  // hours later, and a phone that was off all night should not wake to it.
+  const hours = Number(d.hours) > 0 ? Number(d.hours) : 24;
+  const ttl = Math.min(hours * 3600, 86400);
+
+  return notifySubscribers({
+    title: isShout ? `Shoutout: ${commander}` : `${CFG.name || "Alliance"} announcement`,
+    body: d.message,
+    url: "./#shoutouts",
+    ttl,
+  });
+}
+
+/**
+ * Re-send the notification for the callout that was just posted.
+ *
+ * Deliberately does NOT repost the callout — the row is already in the sheet,
+ * and a second one would be the worst possible fix for a lost notification.
+ */
+async function retryNotify() {
+  if (!lastNotify) return;
+  const btn = $("#retryNotifyBtn");
+  btn.disabled = true;
+  setStatus($("#postStatus"), "Sending notifications…", "");
+  try {
+    const n = await notifyForCallout(lastNotify.draft, lastNotify.commander,
+                                     lastNotify.calloutId, true);
+    setStatus($("#postStatus"),
+      n.none ? "No subscribers yet, so nothing was sent."
+             : `Notified ${n.sent} of ${n.total} device${n.total === 1 ? "" : "s"}.`,
+      n.sent ? "ok" : "err");
+    if (n.sent === n.total) btn.classList.add("hidden");
+  } catch (e) {
+    setStatus($("#postStatus"), "Notification failed again: " + (e.message || e), "err");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function postCallout() {
   const d = draft();
   if (!d.message) { setStatus($("#postStatus"), "Write a message first.", "err"); return; }
@@ -420,6 +613,7 @@ async function postCallout() {
   setStatus($("#postStatus"), "Posting…", "");
   const commander = d.names.join(NAME_SEP);
   const sentAt = Date.now();
+  let recoveredId = "";
   try {
     const res = await postThenVerify({
       action: "callout", secret: state.password, type: d.type,
@@ -427,16 +621,44 @@ async function postCallout() {
       message: d.message, hours: d.hours, author: d.author,
     }, async () => {
       const json = await apiGet({ action: "data", sheet: SHEET });
-      return (json.data || []).some((r) =>
+      // Keep the id off the recovered row: without it a lost response leaves
+      // nothing to claim, and the dedup gate silently stops applying.
+      const hit = (json.data || []).find((r) =>
         String(r.Message == null ? "" : r.Message).trim() === d.message &&
         String(r.Commander == null ? "" : r.Commander).trim() === commander &&
         Date.parse(String(r.Created || "")) >= sentAt - 120000);
+      if (hit) recoveredId = String(hit.Id || "").trim();
+      return !!hit;
     });
     if (!res.ok) {
       setStatus($("#postStatus"), res.error === "unauthorized" ? "Password rejected." : ("Refused: " + res.error), "err");
       return;
     }
-    setStatus($("#postStatus"), "Posted. It is live on the site now.", "ok");
+    // The callout is written and verified. Only now does the push go out, and
+    // only as a separate step — a push that fails must never call into
+    // question a shoutout that is already live on the site.
+    let tail = "";
+    if ($("#notifyCheck").checked) {
+      const calloutId = String(res.id || recoveredId || "");
+      lastNotify = { draft: d, commander, calloutId };
+      setStatus($("#postStatus"), "Posted. Sending notifications…", "");
+      try {
+        const n = await notifyForCallout(d, commander, calloutId);
+        tail = n.already ? " It had already been notified, so nothing was sent again."
+             : n.none ? " No subscribers yet, so nothing was sent."
+             : ` Notified ${n.sent} of ${n.total} device${n.total === 1 ? "" : "s"}.` +
+               (n.disabled ? ` ${n.disabled} stale subscription${n.disabled === 1 ? "" : "s"} retired.` : "");
+        $("#retryNotifyBtn").classList.toggle("hidden", n.sent === n.total || n.none);
+      } catch (e) {
+        // Say plainly that the post landed and the notification did not,
+        // rather than one word that could mean either.
+        tail = " But the notification failed: " + (e.message || e);
+        $("#retryNotifyBtn").classList.remove("hidden");
+      }
+    }
+
+    setStatus($("#postStatus"), "Posted. It is live on the site now." + tail,
+              tail.indexOf("failed") === -1 ? "ok" : "err");
     state.names = [];
     state.badge = "";
     $("#commanderInput").value = "";
@@ -539,6 +761,7 @@ function boot() {
   $("#authorInput").addEventListener("input", renderPreview);
   $("#durationSelect").addEventListener("change", renderPreview);
   $("#postBtn").addEventListener("click", postCallout);
+  $("#retryNotifyBtn").addEventListener("click", retryNotify);
   $("#reloadBtn").addEventListener("click", loadActive);
   $("#clearBtn").addEventListener("click", () => {
     state.names = [];

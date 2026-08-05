@@ -102,10 +102,23 @@
       <h3 class="panel-label">Preview</h3>
       <div class="callout-list" id="previewList"></div>
 
+      <!-- Off by default on purpose. The fastest way to get the whole alliance
+           to block the site is to push every routine announcement. -->
+      <label class="notify-row">
+        <input type="checkbox" id="notifyCheck">
+        <span>
+          Also send a phone notification
+          <em class="notify-count" id="notifyCount"></em>
+        </span>
+      </label>
+
       <p class="settings-status" id="postStatus"></p>
       <div class="settings-actions">
         <button type="button" class="btn-primary" id="postBtn">Post callout</button>
         <button type="button" class="btn-ghost" id="clearBtn">Clear</button>
+        <!-- Appears only when a post succeeded but its notification did not, so
+             a lost send is one click to retry instead of a repost. -->
+        <button type="button" class="btn-ghost hidden" id="retryNotifyBtn">Retry notification</button>
       </div>
     </div>
   </section>

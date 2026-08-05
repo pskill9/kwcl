@@ -53,8 +53,31 @@ function parseDateFromName(name) {
   return y + '-' + mo + '-' + d;
 }
 
+/**
+ * Tabs the public read endpoints refuse to serve.
+ *
+ * Reads are unauthenticated by design — the site is static and every visitor
+ * needs the snapshots. But ?action=sheets enumerates tab NAMES and
+ * ?action=data&sheet=<name> dumps any tab, so anything private stored in this
+ * spreadsheet is one guessed name away from being public. Push Subs holds
+ * every commander's endpoint and keys; Admin Log holds who logged in and when.
+ *
+ * Add a tab here BEFORE putting anything in it that shouldn't be world-readable.
+ */
+var PRIVATE_SHEETS = ['Push Subs', 'Admin Log'];
+
+function isPrivateSheet(name) {
+  var n = String(name || '').trim().toLowerCase();
+  for (var i = 0; i < PRIVATE_SHEETS.length; i++) {
+    if (PRIVATE_SHEETS[i].toLowerCase() === n) return true;
+  }
+  return false;
+}
+
 function listSheets(ss) {
-  var sheets = ss.getSheets().map(function (sh) {
+  var sheets = ss.getSheets().filter(function (sh) {
+    return !isPrivateSheet(sh.getName());
+  }).map(function (sh) {
     var lastRow = sh.getLastRow();
     return {
       name: sh.getName(),
@@ -68,6 +91,11 @@ function listSheets(ss) {
 }
 
 function getData(ss, params) {
+  // Refuse before looking the tab up, so the reply cannot distinguish "private"
+  // from "absent" and confirm what exists.
+  if (params.sheet && isPrivateSheet(params.sheet)) {
+    return { error: 'Sheet not found: ' + params.sheet };
+  }
   var sheet = params.sheet ? ss.getSheetByName(params.sheet) : ss.getSheets()[0];
   if (!sheet) {
     return { error: 'Sheet not found: ' + params.sheet };
@@ -157,6 +185,30 @@ function doPost(e) {
     }
     if (action === 'callout_check') {
       return jsonResponse(checkCallout(ss, params));
+    }
+    if (action === 'push_key') {
+      return jsonResponse(pushKey(ss, params));
+    }
+    if (action === 'push_relay') {
+      return jsonResponse(pushRelay(ss, params));
+    }
+    // Subscribe and unsubscribe carry no secret on purpose: a commander cannot
+    // be given the admin password. See the PUSH SUBSCRIPTIONS section for what
+    // stands in for authentication.
+    if (action === 'push_subscribe') {
+      return jsonResponse(pushSubscribe(ss, params));
+    }
+    if (action === 'push_unsubscribe') {
+      return jsonResponse(pushUnsubscribe(ss, params));
+    }
+    if (action === 'push_list') {
+      return jsonResponse(pushList(ss, params));
+    }
+    if (action === 'push_claim') {
+      return jsonResponse(pushClaim(ss, params));
+    }
+    if (action === 'push_apply') {
+      return jsonResponse(pushApplyResults(ss, params));
     }
 
     return jsonResponse(insertRow(ss, params));
@@ -474,7 +526,8 @@ var ADMIN_LOG_HEADERS = ['Time', 'Event', 'Result', 'Detail'];
 // group. No commander name on record contains a comma, and the joined form
 // stays readable to anyone opening the sheet.
 // Badge is an optional key from config.callouts.badges (e.g. 'healer').
-var CALLOUT_HEADERS = ['Id', 'Type', 'Commander', 'Badge', 'Message', 'Created', 'Expires', 'Author'];
+var CALLOUT_HEADERS = ['Id', 'Type', 'Commander', 'Badge', 'Message', 'Created', 'Expires',
+                       'Author', 'Pushed'];
 
 /**
  * True only when a non-empty CALLOUT_SECRET is configured AND matches.
@@ -605,6 +658,73 @@ function expireCallout(ss, params) {
 }
 
 /**
+ * Claim a callout for notification, exactly once.
+ *
+ * This exists because of a failure mode already documented in admin.js: Apps
+ * Script answers a perfectly good POST with a lost response, so the client
+ * retries. For a sheet write that is harmless — postThenVerify reads the row
+ * back. For a notification it is not: the push already went to a hundred
+ * phones and the retry sends it again.
+ *
+ * So the send is gated on a claim. The first caller to claim a callout id gets
+ * claimed:true and may send; every later caller gets claimed:false. Stamping
+ * and checking happen under a script lock, because two admins posting in the
+ * same second would otherwise both read "not yet pushed" and both send.
+ *
+ * `force` is for the human-operated Retry button, where a repeat is the point.
+ */
+function pushClaim(ss, params) {
+  if (!calloutSecretOk(params.secret)) return { ok: false, error: 'unauthorized' };
+
+  var id = String(params.calloutId == null ? '' : params.calloutId).trim();
+  if (!id) return { ok: false, error: 'calloutId is required' };
+
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+  } catch (e) {
+    // Refuse rather than guess. A caller that cannot get the lock must not
+    // assume it is safe to send.
+    return { ok: false, error: 'busy, try again' };
+  }
+
+  try {
+    // calloutSheet, not getSheetByName: it runs ensureHeaders, which adds the
+    // Pushed column to a tab that predates it. Reading the sheet directly
+    // meant every claim on an existing Shoutouts tab failed with "missing
+    // Id/Pushed columns", so no notification could ever be sent.
+    var sh = calloutSheet(ss);
+    if (sh.getLastRow() < 2) return { ok: false, error: 'no callouts' };
+
+    var cm = calloutColMap(sh);
+    var idCol = cm.map['Id'], pushCol = cm.map['Pushed'];
+    if (idCol === undefined || pushCol === undefined) {
+      return { ok: false, error: 'Shoutouts tab is missing Id/Pushed columns' };
+    }
+
+    var ids = sh.getRange(2, idCol + 1, sh.getLastRow() - 1, 1).getValues();
+    for (var r = 0; r < ids.length; r++) {
+      if (String(ids[r][0]).trim() !== id) continue;
+
+      var row = r + 2;
+      var already = String(sh.getRange(row, pushCol + 1).getValue() || '').trim();
+      if (already && !params.force) {
+        logAdmin(ss, 'push_claim', 'duplicate', id);
+        return { ok: true, claimed: false, pushedAt: already };
+      }
+
+      var stamp = new Date().toISOString();
+      sh.getRange(row, pushCol + 1).setValue(stamp);
+      logAdmin(ss, 'push_claim', params.force ? 'forced' : 'ok', id);
+      return { ok: true, claimed: true, pushedAt: stamp };
+    }
+    return { ok: false, error: 'id not found: ' + id };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
  * Append one line to the Admin Log tab, creating it on first use.
  * Never throws: an audit line failing must not break the action being audited.
  */
@@ -641,4 +761,505 @@ function testPostCallout() {
     message: 'TEST — ignore',
     hours: 1
   }), null, 2));
+}
+
+// ===== PUSH RELAY (added) =====
+//
+// The site is static and Apps Script has no ECDSA and no AES-GCM, so it cannot
+// build a Web Push message itself. The admin browser can — it has WebCrypto —
+// but it cannot DELIVER one: FCM and Apple answer a CORS preflight with no
+// Access-Control-Allow-Origin, so the browser blocks the final POST before it
+// is sent. (Mozilla does allow it. Chrome, Edge and Safari do not.)
+//
+// So the work is split. The browser signs and encrypts; this relays the bytes.
+// Server-to-server has no preflight, so the POST simply goes.
+//
+//   browser:  encrypt + sign  ->  push_relay  ->  push service  ->  phone
+//
+// This code does NO crypto and never sees a key. It receives finished bytes
+// and posts them to an allowlisted host.
+//
+// POST <WEB_APP_URL>
+//   {"action":"push_relay","secret":"…","items":[
+//      {"endpoint":"https://fcm.googleapis.com/fcm/send/…",
+//       "headers":{"Authorization":"vapid t=…, k=…","TTL":"86400", …},
+//       "bodyB64":"<base64url of the aes128gcm record>"}]}
+//   -> {ok:true, sent:1, results:[{endpoint:"…", status:201}]}
+
+// Only these hosts may be posted to. Without this the endpoint is an open
+// relay for anyone holding the admin password — bounded is not the same as
+// safe, but an unbounded one is indefensible.
+var PUSH_HOSTS = [
+  'fcm.googleapis.com',                 // Chrome, Edge
+  'web.push.apple.com',                 // Safari
+  '.push.services.mozilla.com',         // Firefox  (suffix match)
+  '.notify.windows.com'                 // legacy Edge / Windows  (suffix match)
+];
+
+// Headers the push protocol needs. Anything else the caller sends is dropped:
+// this relay forwards a Web Push request, not an arbitrary one.
+var PUSH_HEADER_ALLOW = ['Authorization', 'TTL', 'Urgency', 'Topic', 'Content-Encoding'];
+
+var PUSH_MAX_ITEMS = 25;      // one batch; the browser chunks a bigger roster
+var PUSH_MAX_BODY = 4300;     // a 4096-byte record, base64url-inflated, plus slack
+
+/** True if the endpoint is https and its host is one we relay to. */
+function pushHostAllowed(endpoint) {
+  var m = String(endpoint || '').match(/^https:\/\/([^\/\?#]+)/i);
+  if (!m) return false;
+  var host = m[1].toLowerCase();
+  for (var i = 0; i < PUSH_HOSTS.length; i++) {
+    var want = PUSH_HOSTS[i];
+    if (want.charAt(0) === '.') {
+      if (host.length > want.length && host.slice(-want.length) === want) return true;
+    } else if (host === want) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Hand the VAPID private key to an authenticated admin.
+ *
+ * READ THIS BEFORE CHANGING IT. Unlike CALLOUT_SECRET — which is only ever
+ * compared here and never sent anywhere — this endpoint DISCLOSES a secret to
+ * the browser. Two consequences that are easy to miss:
+ *
+ *   1. Anyone who learns the admin password can keep a permanent ability to
+ *      push notifications to every subscribed commander. Changing the password
+ *      afterwards does not revoke it.
+ *   2. The only revocation is rotating the VAPID pair, which invalidates every
+ *      subscription in existence — everyone has to subscribe again.
+ *
+ * That trade was made deliberately to avoid running a separate send service.
+ * If it ever stops looking worth it, push/worker.js is the alternative and the
+ * crypto module moves across unchanged.
+ */
+function pushKey(ss, params) {
+  if (!calloutSecretOk(params.secret)) {
+    logAdmin(ss, 'push_key', 'denied', String(params.who || ''));
+    return { ok: false, error: 'unauthorized' };
+  }
+  var props = PropertiesService.getScriptProperties();
+  var priv = String(props.getProperty('VAPID_PRIVATE') || '').trim();
+  var pub = String(props.getProperty('VAPID_PUBLIC') || '').trim();
+  var subject = String(props.getProperty('VAPID_SUBJECT') || '').trim();
+
+  if (!priv || !pub) {
+    return { ok: false, error: 'VAPID_PRIVATE / VAPID_PUBLIC are not set in Script Properties' };
+  }
+  logAdmin(ss, 'push_key', 'ok', String(params.who || ''));
+  return { ok: true, publicKey: pub, privateKey: priv, subject: subject || 'mailto:admin@example.com' };
+}
+
+/**
+ * Relay pre-encrypted push messages. Returns one status per item, in order.
+ *
+ * Statuses are passed through verbatim rather than collapsed into ok/fail,
+ * because the caller has to tell them apart: 201 is delivered, 410 means the
+ * subscription is dead and should be pruned, 429 means slow down.
+ */
+function pushRelay(ss, params) {
+  if (!calloutSecretOk(params.secret)) {
+    logAdmin(ss, 'push_relay', 'denied', '');
+    return { ok: false, error: 'unauthorized' };
+  }
+
+  var items = params.items;
+  if (!items || !items.length) return { ok: false, error: 'items is required' };
+  if (items.length > PUSH_MAX_ITEMS) {
+    return { ok: false, error: 'too many items: ' + items.length + ' > ' + PUSH_MAX_ITEMS };
+  }
+
+  var requests = [];
+  var rejected = [];
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i] || {};
+    if (!pushHostAllowed(it.endpoint)) {
+      rejected.push({ index: i, endpoint: String(it.endpoint || ''), status: 0, error: 'host not allowed' });
+      continue;
+    }
+    if (!it.bodyB64 || String(it.bodyB64).length > PUSH_MAX_BODY) {
+      rejected.push({ index: i, endpoint: it.endpoint, status: 0, error: 'body missing or too large' });
+      continue;
+    }
+
+    var headers = {};
+    var given = it.headers || {};
+    for (var h = 0; h < PUSH_HEADER_ALLOW.length; h++) {
+      var name = PUSH_HEADER_ALLOW[h];
+      if (given[name] !== undefined && given[name] !== null && given[name] !== '') {
+        headers[name] = String(given[name]);
+      }
+    }
+    if (!headers['Authorization']) {
+      rejected.push({ index: i, endpoint: it.endpoint, status: 0, error: 'missing Authorization' });
+      continue;
+    }
+    // FCM refuses a push with no TTL, so default it rather than fail the send.
+    if (!headers['TTL']) headers['TTL'] = '86400';
+
+    requests.push({
+      index: i,
+      endpoint: it.endpoint,
+      request: {
+        url: it.endpoint,
+        method: 'post',
+        contentType: 'application/octet-stream',
+        headers: headers,
+        // base64DecodeWebSafe, not base64Decode: the body arrives base64url.
+        payload: Utilities.base64DecodeWebSafe(String(it.bodyB64)),
+        muteHttpExceptions: true,
+        followRedirects: false,
+        validateHttpsCertificates: true
+      }
+    });
+  }
+
+  var results = [];
+  if (requests.length) {
+    var raw = [];
+    for (var r = 0; r < requests.length; r++) raw.push(requests[r].request);
+
+    var responses;
+    try {
+      responses = UrlFetchApp.fetchAll(raw);
+    } catch (err) {
+      // Catching here is deliberate: a push that fails must never take the
+      // shoutout down with it. But it has one surprising side effect — an
+      // unauthorized-scope error caught here does NOT raise the authorization
+      // dialog, because Apps Script only prompts when that error propagates
+      // uncaught. The execution just "completes" with this message instead.
+      // Run authorizePush() once to grant the scope; see its comment below.
+      var msg = String(err);
+      if (msg.indexOf('permission') !== -1 || msg.indexOf('external_request') !== -1) {
+        logAdmin(ss, 'push_relay', 'error', 'not authorized for external requests');
+        return {
+          ok: false,
+          error: 'not authorized: run authorizePush() once in the Apps Script editor ' +
+                 'and approve the prompt, then retry. (' + msg.slice(0, 120) + ')'
+        };
+      }
+      logAdmin(ss, 'push_relay', 'error', msg.slice(0, 180));
+      return { ok: false, error: 'fetchAll failed: ' + msg };
+    }
+
+    for (var k = 0; k < responses.length; k++) {
+      var code = responses[k].getResponseCode();
+      var entry = {
+        index: requests[k].index,
+        endpoint: requests[k].endpoint,
+        status: code
+      };
+      // A push service says nothing useful on success; on refusal it explains.
+      if (code < 200 || code > 299) {
+        entry.body = String(responses[k].getContentText() || '').slice(0, 300);
+      }
+      results.push(entry);
+    }
+  }
+
+  for (var j = 0; j < rejected.length; j++) results.push(rejected[j]);
+  results.sort(function (a, b) { return a.index - b.index; });
+
+  var sent = 0, gone = 0;
+  for (var n = 0; n < results.length; n++) {
+    if (results[n].status >= 200 && results[n].status <= 299) sent++;
+    if (results[n].status === 404 || results[n].status === 410) gone++;
+  }
+
+  logAdmin(ss, 'push_relay', 'ok', sent + '/' + results.length + ' sent, ' + gone + ' gone');
+  return { ok: true, sent: sent, gone: gone, count: results.length, results: results };
+}
+
+/**
+ * Grant the external-request scope. Run this ONCE, from the editor, before
+ * the first relay send. Select it, press Run, approve the prompt.
+ *
+ * It exists because pushRelay wraps fetchAll in try/catch — the right call in
+ * production, since a failed push must not break a shoutout — but a caught
+ * scope error never reaches Apps Script's authorization machinery, so no
+ * consent dialog appears and the run reports success. This function makes the
+ * same kind of call with NO error handling, so the error propagates and the
+ * dialog opens.
+ *
+ * Do not add a try/catch here. That is the entire point of the function.
+ *
+ * FCM will answer the probe with 400 (the body is nonsense). That is success:
+ * a status code coming back at all means the scope was granted and the request
+ * left the building.
+ */
+function authorizePush() {
+  var res = UrlFetchApp.fetch('https://fcm.googleapis.com/fcm/send/authorize-probe', {
+    method: 'post',
+    contentType: 'application/octet-stream',
+    payload: 'probe',
+    muteHttpExceptions: true
+  });
+  Logger.log('Authorized. FCM answered ' + res.getResponseCode() +
+             ' — any status here means the scope is granted.');
+}
+
+/**
+ * Editor sanity check for the relay path, with no browser and no subscription.
+ *
+ * It posts a deliberately malformed body to a real FCM endpoint shape. The
+ * push service will refuse it — that is fine and expected. What this proves is
+ * the thing that actually needed proving: that UrlFetchApp passes
+ * Content-Encoding and Authorization through to the push service unmodified,
+ * and hands the status code back rather than throwing.
+ *
+ * A 400 or 401 here means the relay works. A 403 about the VAPID key means the
+ * relay works too. Only a thrown exception, or a stripped-header complaint,
+ * means it does not.
+ */
+function testPushRelay() {
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var out = pushRelay(ss, {
+    secret: PropertiesService.getScriptProperties().getProperty('CALLOUT_SECRET'),
+    items: [{
+      endpoint: 'https://fcm.googleapis.com/fcm/send/relay-smoke-test',
+      headers: {
+        Authorization: 'vapid t=not.a.real.jwt, k=notarealkey',
+        'Content-Encoding': 'aes128gcm',
+        TTL: '60'
+      },
+      bodyB64: 'AAAAAAAAAAAAAAAAAAAAAA'
+    }]
+  });
+  Logger.log(JSON.stringify(out, null, 2));
+}
+
+// ===== PUSH SUBSCRIPTIONS (added) =====
+//
+// One row per subscribed device. There is deliberately NO commander name:
+// subscribing is one tap, and every subscriber gets the same message. Adding
+// identity later means adding a column and a picker — nothing here has to
+// change shape for that.
+//
+// Reads and writes here are UNAUTHENTICATED, because a commander cannot be
+// given the admin password. What stands in for auth:
+//   - the endpoint host must be a real push service (pushHostAllowed)
+//   - values are length-capped and the table has a row ceiling
+//   - subscribe upserts by endpoint, so re-tapping never duplicates
+//   - unsubscribe is keyed by ENDPOINT, never by anything guessable, so
+//     knowing the endpoint is itself the proof of ownership
+//
+// The tab is in PRIVATE_SHEETS, so ?action=data cannot read it back out.
+//
+// POST {"action":"push_subscribe","subscription":{"endpoint":"…","keys":{"p256dh":"…","auth":"…"}}}
+// POST {"action":"push_unsubscribe","endpoint":"…"}
+// POST {"action":"push_list","secret":"…"}          <- admin only
+
+var PUSH_SHEET = 'Push Subs';
+var PUSH_HEADERS = ['Id', 'Endpoint', 'P256dh', 'Auth', 'Created', 'LastSeen',
+                    'LastResult', 'Fails', 'Disabled', 'UA'];
+
+var PUSH_SUBS_MAX = 500;      // ~100 commanders, several devices each, headroom
+var PUSH_ENDPOINT_MAX = 500;  // real endpoints run ~200 chars
+var PUSH_KEY_MAX = 200;
+
+function pushSheet(ss) {
+  var sh = ss.getSheetByName(PUSH_SHEET);
+  if (!sh) sh = ss.insertSheet(PUSH_SHEET);
+  ensureHeaders(sh, PUSH_HEADERS);
+  return sh;
+}
+
+/** header name -> 0-based column index for the Push Subs tab as it stands. */
+function pushColMap(sh) {
+  var lastCol = Math.max(sh.getLastColumn(), PUSH_HEADERS.length);
+  var headers = sh.getRange(1, 1, 1, lastCol).getValues()[0]
+    .map(function (h) { return String(h).trim(); });
+  var map = {};
+  for (var i = 0; i < headers.length; i++) map[headers[i]] = i;
+  return { map: map, width: headers.length };
+}
+
+/** Row number (1-based, as the sheet counts) for an endpoint, or 0. */
+function pushFindRow(sh, cm, endpoint) {
+  if (sh.getLastRow() < 2) return 0;
+  var col = cm.map['Endpoint'];
+  if (col === undefined) return 0;
+  var values = sh.getRange(2, col + 1, sh.getLastRow() - 1, 1).getValues();
+  for (var i = 0; i < values.length; i++) {
+    if (String(values[i][0]).trim() === endpoint) return i + 2;
+  }
+  return 0;
+}
+
+/** Store or refresh one subscription. Returns a status object. */
+function pushSubscribe(ss, params) {
+  var sub = params.subscription || {};
+  var keys = sub.keys || {};
+  var endpoint = String(sub.endpoint == null ? '' : sub.endpoint).trim();
+  var p256dh = String(keys.p256dh == null ? '' : keys.p256dh).trim();
+  var auth = String(keys.auth == null ? '' : keys.auth).trim();
+
+  if (!endpoint || !p256dh || !auth) {
+    return { ok: false, error: 'subscription must have endpoint and keys.p256dh and keys.auth' };
+  }
+  if (!pushHostAllowed(endpoint)) {
+    return { ok: false, error: 'endpoint is not a recognised push service' };
+  }
+  if (endpoint.length > PUSH_ENDPOINT_MAX ||
+      p256dh.length > PUSH_KEY_MAX || auth.length > PUSH_KEY_MAX) {
+    return { ok: false, error: 'subscription fields are too long' };
+  }
+
+  var sh = pushSheet(ss);
+  var cm = pushColMap(sh);
+
+  // A rotated subscription supersedes the old row rather than leaving a dead
+  // one behind for the pruner to find later.
+  var replaces = String(params.replaces == null ? '' : params.replaces).trim();
+  if (replaces && replaces !== endpoint) {
+    var oldRow = pushFindRow(sh, cm, replaces);
+    if (oldRow) sh.deleteRow(oldRow);
+    cm = pushColMap(sh);
+  }
+
+  var now = new Date().toISOString();
+  var row = pushFindRow(sh, cm, endpoint);
+
+  if (row) {
+    // Re-tapping the bell refreshes the keys and clears any strikes, so a
+    // subscription disabled by an outage comes back on its own.
+    setIfPresent(sh, cm, row, 'P256dh', p256dh);
+    setIfPresent(sh, cm, row, 'Auth', auth);
+    setIfPresent(sh, cm, row, 'LastSeen', now);
+    setIfPresent(sh, cm, row, 'Fails', 0);
+    setIfPresent(sh, cm, row, 'Disabled', '');
+    logAdmin(ss, 'push_subscribe', 'ok', 'refreshed row ' + row);
+    return { ok: true, created: false, rowNumber: row };
+  }
+
+  if (sh.getLastRow() - 1 >= PUSH_SUBS_MAX) {
+    logAdmin(ss, 'push_subscribe', 'denied', 'table full');
+    return { ok: false, error: 'subscription list is full' };
+  }
+
+  var id = 'p_' + new Date().getTime() + '_' + Math.floor(Math.random() * 1679616).toString(36);
+  var values = {
+    'Id': id, 'Endpoint': endpoint, 'P256dh': p256dh, 'Auth': auth,
+    'Created': now, 'LastSeen': now, 'LastResult': '', 'Fails': 0, 'Disabled': '',
+    'UA': String(params.ua == null ? '' : params.ua).slice(0, 180)
+  };
+  var line = [];
+  for (var i = 0; i < cm.width; i++) line.push('');
+  for (var key in values) {
+    var idx = cm.map[key];
+    if (idx !== undefined) line[idx] = values[key];
+  }
+  sh.appendRow(line);
+
+  logAdmin(ss, 'push_subscribe', 'ok', 'new row ' + sh.getLastRow());
+  return { ok: true, created: true, id: id, rowNumber: sh.getLastRow() };
+}
+
+function setIfPresent(sh, cm, row, header, value) {
+  var idx = cm.map[header];
+  if (idx !== undefined) sh.getRange(row, idx + 1).setValue(value);
+}
+
+/** Remove one subscription. Keyed by endpoint: knowing it is the proof. */
+function pushUnsubscribe(ss, params) {
+  var endpoint = String(params.endpoint == null ? '' : params.endpoint).trim();
+  if (!endpoint) return { ok: false, error: 'endpoint is required' };
+
+  var sh = ss.getSheetByName(PUSH_SHEET);
+  if (!sh || sh.getLastRow() < 2) return { ok: true, removed: false };
+
+  var cm = pushColMap(sh);
+  var row = pushFindRow(sh, cm, endpoint);
+  if (!row) return { ok: true, removed: false };
+
+  sh.deleteRow(row);
+  logAdmin(ss, 'push_unsubscribe', 'ok', 'row ' + row);
+  return { ok: true, removed: true };
+}
+
+/**
+ * Every live subscription. Admin only — these are the credentials needed to
+ * push to somebody's device, and the tab is private for the same reason.
+ */
+function pushList(ss, params) {
+  if (!calloutSecretOk(params.secret)) {
+    logAdmin(ss, 'push_list', 'denied', '');
+    return { ok: false, error: 'unauthorized' };
+  }
+
+  var sh = ss.getSheetByName(PUSH_SHEET);
+  if (!sh || sh.getLastRow() < 2) return { ok: true, count: 0, subs: [] };
+
+  var cm = pushColMap(sh);
+  var values = sh.getRange(2, 1, sh.getLastRow() - 1, cm.width).getValues();
+  var subs = [];
+  for (var i = 0; i < values.length; i++) {
+    var r = values[i];
+    if (String(r[cm.map['Disabled']] || '').trim()) continue;   // skip pruned
+    var endpoint = String(r[cm.map['Endpoint']] || '').trim();
+    if (!endpoint) continue;
+    subs.push({
+      id: String(r[cm.map['Id']] || ''),
+      endpoint: endpoint,
+      keys: {
+        p256dh: String(r[cm.map['P256dh']] || ''),
+        auth: String(r[cm.map['Auth']] || '')
+      }
+    });
+  }
+  return { ok: true, count: subs.length, subs: subs };
+}
+
+/**
+ * Apply the statuses a send produced: stamp the live ones, retire the dead.
+ *
+ * Called with whatever pushRelay returned. Kept separate from pushRelay so the
+ * relay stays a dumb transport that knows nothing about the subscription
+ * table — which is what lets a Cloudflare Worker replace it later without
+ * touching any of this.
+ */
+function pushApplyResults(ss, params) {
+  if (!calloutSecretOk(params.secret)) return { ok: false, error: 'unauthorized' };
+
+  var results = params.results || [];
+  var sh = ss.getSheetByName(PUSH_SHEET);
+  if (!sh || sh.getLastRow() < 2) return { ok: true, updated: 0, disabled: 0 };
+
+  var cm = pushColMap(sh);
+  var now = new Date().toISOString();
+  var updated = 0, disabled = 0;
+
+  for (var i = 0; i < results.length; i++) {
+    var r = results[i] || {};
+    var row = pushFindRow(sh, cm, String(r.endpoint || '').trim());
+    if (!row) continue;
+
+    var status = Number(r.status);
+    setIfPresent(sh, cm, row, 'LastResult', status);
+
+    if (status >= 200 && status <= 299) {
+      setIfPresent(sh, cm, row, 'LastSeen', now);
+      setIfPresent(sh, cm, row, 'Fails', 0);
+      updated++;
+    } else if (status === 404 || status === 410) {
+      // Gone for good. Never retry these — the endpoint will never work again.
+      setIfPresent(sh, cm, row, 'Disabled', now);
+      disabled++;
+    } else if (status !== 429) {
+      // 429 is the push service asking us to slow down, not a broken
+      // subscription, so it must not count as a strike.
+      var col = cm.map['Fails'];
+      var fails = col === undefined ? 0 : Number(sh.getRange(row, col + 1).getValue() || 0);
+      fails = (isNaN(fails) ? 0 : fails) + 1;
+      setIfPresent(sh, cm, row, 'Fails', fails);
+      if (fails >= 5) { setIfPresent(sh, cm, row, 'Disabled', now); disabled++; }
+      updated++;
+    }
+  }
+
+  logAdmin(ss, 'push_apply', 'ok', updated + ' updated, ' + disabled + ' disabled');
+  return { ok: true, updated: updated, disabled: disabled };
 }

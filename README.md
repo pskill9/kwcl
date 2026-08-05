@@ -117,6 +117,70 @@ Run `node tools/test-callouts.mjs` to exercise the callout code in `Code.gs`
 under fake Google services, and `node tools/mock-api.mjs` to drive the site
 locally against an in-memory sheet (`index.html?api=http://localhost:8787`).
 
+### Push notifications (optional)
+
+A bell in the topbar. One tap, no name asked: the browser stores an anonymous
+subscription and every subscriber gets the same message. Admins send one by
+ticking **Also send a phone notification** when posting a shoutout.
+
+It works with the site closed — that is the whole point of a service worker.
+**On iPhone and iPad the page must be installed to the Home Screen first**
+(Share → Add to Home Screen); Safari does not allow push from a normal tab, and
+before installing, the notification API does not exist at all. The bell detects
+this and shows the instructions instead.
+
+**Why the sending is split in two.** Web Push needs ECDSA P-256 signing and
+AES-128-GCM encryption. Apps Script has neither. The browser has both — but it
+cannot deliver: FCM and Apple answer a CORS preflight with no
+`Access-Control-Allow-Origin`, so Chrome, Edge and Safari block the final POST.
+(Firefox allows it; one path that works for everyone beats two that each work
+for some.) So `admin.html` encrypts and `Code.gs` relays the finished bytes —
+server to server, where no preflight applies.
+
+`push/crypto.js` holds all of it and is free of anything environment-specific,
+so the same file runs in the browser, in node, and — if you ever want sends
+that fire with nobody at a keyboard — in a Cloudflare Worker.
+
+Setup, once:
+
+1. `node push/keys.mjs` — generates a VAPID keypair. **Never rotate it**: the
+   public half is baked into every subscription any browser has made, and
+   changing it invalidates all of them silently.
+2. Public key → `config.js` under `push.publicKey`. It is public by design.
+3. Private key → Apps Script → Project Settings → Script Properties:
+   `VAPID_PRIVATE`, plus `VAPID_PUBLIC` and `VAPID_SUBJECT` (a `mailto:`).
+4. In the Apps Script editor, run **`authorizePush`** once and approve the
+   prompt. It exists because `pushRelay` catches its own errors — correct in
+   production, but a caught scope error never raises the authorization dialog,
+   so the run reports success and nothing is granted.
+
+Two tabs appear on their own: `Push Subs` (one row per device) and a `Pushed`
+column on `Shoutouts`. Both are in `PRIVATE_SHEETS`, so `?action=data` refuses
+to serve them — subscriptions are the credentials needed to push to somebody's
+phone.
+
+**A notification is sent at most once.** `push_claim` stamps the callout under a
+script lock before anything goes out, because `postThenVerify` retries a lost
+POST — right for a sheet write, wrong for a push that already reached every
+phone. The Retry button forces past it deliberately.
+
+Test without deploying anything:
+
+```
+node push/test-encrypt.mjs        # encrypt, decrypt, verify the VAPID signature
+node tools/test-push-relay.mjs    # the real Code.gs under fake Google services
+python3 -m http.server 8080       # then open /push/subscribe-test.html
+node tools/push-send.mjs --title "Rally" --body "Gathering point in 10"
+```
+
+`push-send.mjs` posts straight to the push service by default, so a first
+delivery can be proved with nothing deployed. `--via relay` routes through
+`Code.gs` instead, exercising the path the admin panel uses.
+
+**Debug with node, not curl.** A POST to `/exec` redirects to
+`script.googleusercontent.com`, and `curl -L` returns a Drive "Page Not Found"
+page with a 404 for a request that actually succeeded.
+
 ### Commander avatars (optional)
 
 `assets/commanders/index.json` maps commander name → image path, and the roster,

@@ -1732,6 +1732,262 @@ function applyConfig() {
 }
 
 /* ------------------------------------------------------------ boot */
+/* ============================================================ push notifications
+
+   One tap, no name: subscribing stores an anonymous device endpoint, and every
+   subscriber gets the same message. There is no login on this site, so asking
+   "who are you" would have been an honour-system field that bought targeting
+   and cost a step — the step lost.
+
+   The bell lives in the topbar rather than the Shoutouts section head because
+   that section is hidden whenever nothing is active, which is precisely when
+   somebody would want to turn notifications on.
+   ============================================================================ */
+
+const PUSH = { cfg: null, reg: null, sub: null, busy: false };
+
+function pushConfigured() {
+  const c = CFG.push || {};
+  return !!(c.enabled && c.publicKey && getApiUrl());
+}
+
+/** Everything push needs, checked separately so failures can be explained. */
+function pushSupported() {
+  return window.isSecureContext &&
+         "serviceWorker" in navigator &&
+         "PushManager" in window &&
+         "Notification" in window;
+}
+
+/* iPadOS reports itself as MacIntel, so the touch-point check is what
+   distinguishes an iPad from a Mac. Both matter: Safari only permits push from
+   a home-screen install, and before that Notification is undefined entirely. */
+function isIosLike() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+         (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+function isInstalled() {
+  return window.matchMedia("(display-mode: standalone)").matches ||
+         window.navigator.standalone === true;
+}
+
+function b64urlToBytes(s) {
+  const pad = "=".repeat((4 - (s.length % 4)) % 4);
+  const bin = atob((s + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+
+/* Same transport discipline as admin.js: text/plain keeps this a CORS simple
+   request (Apps Script cannot answer a preflight) and credentials are omitted
+   because Google cookies make it answer 404 with HTML.
+
+   Retries matter here. Apps Script intermittently answers a perfectly good
+   POST with 404 and an HTML body — the same failure postThenVerify exists to
+   absorb in admin.js. Without a retry a commander taps "Turn on", sees it
+   fail, and is left unsubscribed by a request that may well have landed.
+
+   A JSON reply carrying ok:false is a real refusal and is NOT retried: the
+   server understood and said no. Only a lost response is worth asking again.
+
+   `shapeOk` is what makes this safe. Apps Script's other failure mode is a
+   redirect that degrades into a GET: doPost never runs, and the reply is
+   doGet's default output — the roster sheet, as perfectly valid JSON with no
+   `ok` field at all. Checking only for ok:false accepts that as success, so
+   the bell turns green while the server has no idea the device exists. */
+async function pushApiPost(body, shapeOk, tries = 3) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < tries; attempt++) {
+    try {
+      const res = await fetch(getApiUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(body),
+        redirect: "follow",
+        credentials: "omit",
+      });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const json = await res.json();
+      if (json && json.ok === false) {
+        throw Object.assign(new Error(json.error || "refused"), { refused: true });
+      }
+      if (shapeOk && !shapeOk(json)) throw new Error("unrecognised reply from " + body.action);
+      return json;
+    } catch (e) {
+      if (e.refused) throw e;
+      lastErr = e;
+      if (attempt < tries - 1) await new Promise((r) => setTimeout(r, 900 * (attempt + 1)));
+    }
+  }
+  throw lastErr;
+}
+
+async function initPush() {
+  if (!pushConfigured()) return;
+
+  const bell = $("#bellBtn");
+  if (!bell) return;
+
+  // iOS can subscribe, but only once installed. Show the bell anyway so the
+  // requirement is discoverable — a missing control explains nothing.
+  if (isIosLike() && !isInstalled()) {
+    bell.classList.remove("hidden");
+    PUSH.state = "ios";
+    wirePushUi();
+    return;
+  }
+  if (!pushSupported()) return;      // nothing we show could ever work
+
+  try {
+    // Relative path: on GitHub Pages this registers /kwcl/sw.js at scope
+    // /kwcl/, not the origin root.
+    PUSH.reg = await navigator.serviceWorker.register("sw.js");
+    await navigator.serviceWorker.ready;
+    PUSH.sub = await PUSH.reg.pushManager.getSubscription();
+  } catch (e) {
+    console.error("Service worker registration failed:", e);
+    return;
+  }
+
+  bell.classList.remove("hidden");
+  wirePushUi();
+  renderPushUi();
+}
+
+function wirePushUi() {
+  if (PUSH.wired) return;
+  PUSH.wired = true;
+
+  $("#bellBtn").addEventListener("click", () => {
+    const open = $("#pushPanel").classList.toggle("hidden") === false;
+    $("#bellBtn").setAttribute("aria-expanded", String(open));
+    if (open) renderPushUi();
+  });
+  $("#pushDismiss").addEventListener("click", closePushPanel);
+  $("#pushEnable").addEventListener("click", onPushToggle);
+
+  // Clicking away closes it; Escape closes it. A panel you cannot dismiss
+  // without finding the right button is a panel people learn to resent.
+  document.addEventListener("click", (e) => {
+    if ($("#pushPanel").classList.contains("hidden")) return;
+    if (e.target.closest("#pushPanel") || e.target.closest("#bellBtn")) return;
+    closePushPanel();
+  });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePushPanel(); });
+}
+
+function closePushPanel() {
+  $("#pushPanel").classList.add("hidden");
+  $("#bellBtn").setAttribute("aria-expanded", "false");
+}
+
+function renderPushUi() {
+  const bell = $("#bellBtn");
+  const body = $("#pushPanelBody");
+  const go = $("#pushEnable");
+  const dismiss = $("#pushDismiss");
+
+  bell.classList.remove("on", "blocked");
+  go.classList.remove("busy");
+  go.disabled = false;
+  go.classList.remove("hidden");
+  dismiss.textContent = "Not now";
+
+  if (PUSH.state === "ios") {
+    body.innerHTML = "On iPhone and iPad, notifications only work once this page " +
+      "is installed. Tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>, " +
+      "and open it from there.";
+    go.classList.add("hidden");
+    dismiss.textContent = "Got it";
+    return;
+  }
+
+  // Blocked is a one-way door — the browser will not prompt again, so say what
+  // to do instead of offering a button that silently does nothing.
+  if (Notification.permission === "denied") {
+    bell.classList.add("blocked");
+    body.innerHTML = "Notifications are <strong>blocked</strong> for this site in your " +
+      "browser settings. Allow them there, then reload this page.";
+    go.classList.add("hidden");
+    dismiss.textContent = "Close";
+    return;
+  }
+
+  if (PUSH.sub) {
+    bell.classList.add("on");
+    body.innerHTML = "You'll get a notification when an admin posts a shoutout or " +
+      "an announcement. <strong>Nothing else.</strong>";
+    go.textContent = "Turn off";
+    return;
+  }
+
+  body.innerHTML = "Get a notification when an admin posts a shoutout or an alliance " +
+    "announcement — even with this page closed. <strong>Nothing else, and no name required.</strong>";
+  go.textContent = "Turn on";
+}
+
+async function onPushToggle() {
+  if (PUSH.busy) return;
+  const go = $("#pushEnable");
+  const body = $("#pushPanelBody");
+
+  PUSH.busy = true;
+  go.classList.add("busy");
+  go.disabled = true;
+
+  try {
+    if (PUSH.sub) {
+      const endpoint = PUSH.sub.endpoint;
+      await PUSH.sub.unsubscribe();
+      PUSH.sub = null;
+      // Local first: even if this call is lost, the endpoint is now dead and
+      // the next send prunes it on a 410. Self-healing either way.
+      await pushApiPost({ action: "push_unsubscribe", endpoint },
+                        (r) => r && r.ok === true);
+    } else {
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") { renderPushUi(); return; }
+
+      const sub = await PUSH.reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: b64urlToBytes(CFG.push.publicKey),
+      });
+
+      try {
+        await pushApiPost({
+          action: "push_subscribe",
+          subscription: sub.toJSON(),
+          ua: navigator.userAgent.slice(0, 180),
+        }, (r) => r && r.ok === true && typeof r.created === "boolean");
+      } catch (err) {
+        // The browser would happily report "subscribed" while the server has
+        // no idea the device exists — a state that looks fine and never
+        // delivers anything. Roll it back so the UI stays honest.
+        await sub.unsubscribe().catch(() => {});
+        throw err;
+      }
+
+      PUSH.sub = sub;
+      // Give the worker what it needs to re-register itself when the browser
+      // rotates the endpoint, which happens with no page open to ask.
+      navigator.serviceWorker.controller?.postMessage({
+        type: "config",
+        apiUrl: getApiUrl(),
+        publicKey: CFG.push.publicKey,
+      });
+    }
+    renderPushUi();
+  } catch (e) {
+    console.error("Push toggle failed:", e);
+    body.innerHTML = "That didn't work — <strong>" +
+      String(e.message || e).replace(/[<>]/g, "") + "</strong>. Try again in a moment.";
+    $("#pushEnable").textContent = PUSH.sub ? "Turn off" : "Turn on";
+  } finally {
+    PUSH.busy = false;
+    go.classList.remove("busy");
+    go.disabled = false;
+  }
+}
+
 async function boot() {
   applyConfig();
   wireSettings();
@@ -1747,6 +2003,10 @@ async function boot() {
 
   await loadAvatarIndex();
   const painted = paintFromCache();
+
+  // Fire and forget: a service worker that fails to register must never stop
+  // the alliance numbers from loading.
+  initPush().catch((e) => console.error("Push init failed:", e));
 
   const base = getApiUrl();
   if (base) {
