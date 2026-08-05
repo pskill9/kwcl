@@ -81,10 +81,12 @@ a:hover { color: var(--ink); }
 .topbar-right { display: flex; align-items: center; gap: 10px; }
 
 .data-pill {
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
   font-family: var(--font-num); font-weight: 600; font-size: 12px; letter-spacing: 1px;
   padding: 4px 10px; border-radius: 999px; border: 1px solid var(--ring);
   color: var(--ink-mute); background: var(--surface);
 }
+.data-pill-dot { line-height: 1; }
 .data-pill.live  { color: var(--good);  border-color: rgba(12,163,12,0.4); }
 .data-pill.demo  { color: var(--s4);    border-color: rgba(201,133,0,0.4); }
 .data-pill.cached { color: var(--ink-mute); border-color: var(--baseline); }
@@ -589,6 +591,16 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 0 20px 40px; }
   .brand-sub { letter-spacing: 1.5px; }
   .stat .value { font-size: 24px; }
   .section { margin-top: 44px; }
+
+  /* Collapse the status pill to a 28px circle so it matches the bell and
+     refresh buttons beside it — at phone widths the label wrapped to a second
+     line and the pill towered over them. The dot still carries the state
+     (green/amber/grey); the word lives in the title + aria-label. */
+  .data-pill {
+    width: 28px; height: 28px; padding: 0; gap: 0;
+    justify-content: center; font-size: 13px;
+  }
+  .data-pill-text { display: none; }
 }
 
 /* ---------- notifications bell ---------- */

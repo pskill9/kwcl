@@ -1578,22 +1578,36 @@ function paintFromCache() {
 }
 
 /* ------------------------------------------------------------ source pill / banners */
+
+/* Dot and label are separate elements so the phone breakpoint can collapse the
+   pill to a 28px circle (matching the bell/refresh buttons) by hiding just the
+   label. The word then only exists in the accessible name, so set it there. */
+function setPill(pill, dot, label, cls, title) {
+  pill.className = "data-pill " + cls;
+  pill.textContent = "";
+  const d = document.createElement("span");
+  d.className = "data-pill-dot";
+  d.textContent = dot;
+  const t = document.createElement("span");
+  t.className = "data-pill-text";
+  t.textContent = label;
+  pill.append(d, t);
+  pill.title = title || label;
+  pill.setAttribute("aria-label", "Data status: " + label);
+}
+
 function setSourceUI() {
   const pill = $("#dataPill");
   if (state.source === "live") {
-    pill.textContent = "● LIVE";
-    pill.className = "data-pill live";
+    setPill(pill, "●", "LIVE", "live", "Live data");
     $("#demoBanner").classList.add("hidden");
   } else if (state.source === "cache") {
     // real numbers, but as of the last visit — say so rather than let them
     // pass for current, since the whole page is 24h and 7d deltas
-    pill.textContent = "◍ SAVED";
-    pill.className = "data-pill cached";
-    pill.title = "Showing your last saved snapshot — refreshing…";
+    setPill(pill, "◍", "SAVED", "cached", "Showing your last saved snapshot — refreshing…");
     $("#demoBanner").classList.add("hidden");
   } else {
-    pill.textContent = "◐ DEMO";
-    pill.className = "data-pill demo";
+    setPill(pill, "◐", "DEMO", "demo", "Demo data");
     $("#demoBanner").classList.remove("hidden");
   }
 }
