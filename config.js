@@ -106,6 +106,10 @@ window.ALLIANCE_CONFIG = {
     maxLength: 300,                 // it lands on a lock screen; keep it short
     buttonLabel: "Announce",
     placeholder: "Say something to the whole alliance…",
+    /* Shown under the box before anything is typed. Say plainly that this is
+       public: it is posted on the HQ page for everyone to read, not only sent
+       as a notification, and an admin should know that before they type. */
+    note: "Posted publicly on the HQ page and sent as a notification.",
   },
 
   /* Browser push notifications.

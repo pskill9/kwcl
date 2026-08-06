@@ -720,9 +720,17 @@ function renderQuickSay() {
   const empty = !input.value.trim();
   btn.disabled = cooling || empty;
 
-  hint.textContent = cooling ? "Just sent — hold on a moment."
-    : empty ? ""
-    : `Notifies ${state.subCount || 0} device${state.subCount === 1 ? "" : "s"} · shows for ${q.hours || 6}h`;
+  const hours = q.hours || 6;
+  const n = state.subCount || 0;
+
+  // Say what this does BEFORE anything is typed. The text is posted publicly on
+  // the HQ page, not just pushed to phones, and an admin should know that while
+  // they are deciding what to write rather than after they have sent it.
+  hint.textContent = cooling
+    ? "Just sent — hold on a moment."
+    : empty
+      ? (q.note || "Posted publicly on the HQ page and sent as a notification.")
+      : `Goes on the HQ page for ${hours}h · notifies ${n} device${n === 1 ? "" : "s"}`;
 }
 
 async function onQuickSay() {
