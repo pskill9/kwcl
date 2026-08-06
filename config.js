@@ -90,6 +90,24 @@ window.ALLIANCE_CONFIG = {
     },
   ],
 
+  /* Quick announce — type a line, send it to everyone.
+
+     The composer already does this properly, with templates, commanders,
+     badges, a duration and a preview. This is the other case: something worth
+     saying right now, where all that is friction. It posts a plain
+     announcement and always notifies, because an announcement nobody is told
+     about may as well not exist.
+
+     One tap, not two: typing the message IS the deliberation, unlike the bare
+     treasure and gift buttons which can be hit by a stray click. */
+  quickAnnounce: {
+    enabled: true,
+    hours: 6,                       // how long it stays on the site
+    maxLength: 300,                 // it lands on a lock screen; keep it short
+    buttonLabel: "Announce",
+    placeholder: "Say something to the whole alliance…",
+  },
+
   /* Browser push notifications.
 
      publicKey is the VAPID public half. It is PUBLIC by design — every

@@ -219,6 +219,13 @@ ten minutes and the second dig still needs announcing. The button locks only
 for `alertCooldownSeconds` (default 10) to swallow a double-tap, and the hint
 shows the live countdown alongside "you can send another".
 
+Alongside the buttons sits **quick announce** — a text box and one button that
+posts a plain announcement and notifies everyone. The composer below it is the
+considered path (templates, commanders, badges, a duration, a preview); this is
+the other case, where all of that is friction. One tap rather than two, because
+typing the message is already the deliberation. Configure it under
+`quickAnnounce`, or set `enabled: false` to remove it.
+
 `minutes` exists on the callout endpoint for this: ten minutes cannot be
 written in whole hours, and a fraction in the `hours` column reads like a typo
 to anyone opening the sheet.

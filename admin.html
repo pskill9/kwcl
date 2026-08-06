@@ -55,6 +55,16 @@
     </div>
     <div class="panel">
       <div class="alert-panel" id="alertPanel"></div>
+
+      <!-- Type a line, send it to everyone. The composer below is the
+           considered path; this is the "say it now" one. -->
+      <div class="quick-say hidden" id="quickSay">
+        <input type="text" id="quickSayInput" spellcheck="true" autocomplete="off"
+               placeholder="Say something to the whole alliance…">
+        <button type="button" class="btn-alert" id="quickSayBtn">Announce</button>
+        <span class="alert-hint" id="quickSayHint"></span>
+      </div>
+
       <p class="settings-status" id="alertStatus"></p>
     </div>
   </section>

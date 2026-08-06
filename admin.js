@@ -526,7 +526,9 @@ function buildAlertPanel() {
   if (!panel || !sec) return;
 
   const kinds = alertKinds();
-  if (!kinds.length) { sec.classList.add("hidden"); return; }
+  // The section still earns its place with no alert buttons at all, as long as
+  // quick announce is on.
+  if (!kinds.length && !quickCfg().enabled) { sec.classList.add("hidden"); return; }
   sec.classList.remove("hidden");
 
   if (panel.dataset.built === String(kinds.length)) return;
@@ -549,6 +551,7 @@ function buildAlertPanel() {
 
 function renderAlertUi() {
   buildAlertPanel();
+  renderQuickSay();
   if (alertTick) { clearInterval(alertTick); alertTick = null; }
 
   let anyLive = false;
@@ -679,6 +682,106 @@ async function onAlertClick(a) {
     setStatus($("#alertStatus"), "Failed: " + (e.message || e), "err");
   } finally {
     renderAlertUi();
+  }
+}
+
+/* ------------------------------------------------- quick announce
+
+   Type a line, send it to everyone. The composer is the considered path —
+   templates, commanders, badges, a duration, a preview. This is the other
+   case: something worth saying right now, where all of that is friction.
+
+   One tap, unlike the bare treasure and gift buttons. Typing the message is
+   the deliberation; there is no stray click that produces a sentence.
+   ------------------------------------------------------------------ */
+
+let quickSayCooling = 0;
+
+function quickCfg() {
+  return CFG.quickAnnounce || {};
+}
+
+function renderQuickSay() {
+  const row = $("#quickSay");
+  if (!row) return;
+  const q = quickCfg();
+  if (!q.enabled) { row.classList.add("hidden"); return; }
+  row.classList.remove("hidden");
+
+  const input = $("#quickSayInput");
+  const btn = $("#quickSayBtn");
+  const hint = $("#quickSayHint");
+
+  input.placeholder = q.placeholder || "Say something to the whole alliance…";
+  input.maxLength = Number(q.maxLength) > 0 ? Number(q.maxLength) : 300;
+  btn.textContent = q.buttonLabel || "Announce";
+
+  const cooling = quickSayCooling > Date.now();
+  const empty = !input.value.trim();
+  btn.disabled = cooling || empty;
+
+  hint.textContent = cooling ? "Just sent — hold on a moment."
+    : empty ? ""
+    : `Notifies ${state.subCount || 0} device${state.subCount === 1 ? "" : "s"} · shows for ${q.hours || 6}h`;
+}
+
+async function onQuickSay() {
+  const q = quickCfg();
+  const input = $("#quickSayInput");
+  const message = input.value.trim();
+  if (!message) return;
+
+  quickSayCooling = Date.now() + cooldownMs();
+  $("#quickSayBtn").disabled = true;
+  setStatus($("#alertStatus"), "Posting…", "");
+
+  const hours = Number(q.hours) > 0 ? Number(q.hours) : 6;
+  const sentAt = Date.now();
+  let recoveredId = "";
+
+  try {
+    const res = await postThenVerify({
+      action: "callout", secret: state.password, type: "announcement",
+      message, hours,
+      author: $("#authorInput") ? $("#authorInput").value.trim() : "",
+    }, async () => {
+      const json = await apiGet({ action: "data", sheet: SHEET });
+      const hit = (json.data || []).find((r) =>
+        String(r.Message == null ? "" : r.Message).trim() === message &&
+        Date.parse(String(r.Created || "")) >= sentAt - 120000);
+      if (hit) recoveredId = String(hit.Id || "").trim();
+      return !!hit;
+    });
+
+    if (!res.ok) {
+      setStatus($("#alertStatus"),
+        res.error === "unauthorized" ? "Password rejected." : ("Refused: " + res.error), "err");
+      return;
+    }
+
+    // Always notifies. A quick announcement nobody is told about may as well
+    // not exist — that is the entire difference from the composer.
+    setStatus($("#alertStatus"), "Posted. Sending notifications…", "");
+    const id = String(res.id || recoveredId || "");
+    try {
+      const n = await notifyForCallout({ type: "announcement", message, hours }, "", id);
+      setStatus($("#alertStatus"),
+        n.none ? "Posted. No subscribers yet, so nobody was notified."
+               : `Posted. Notified ${n.sent} of ${n.total} device${n.total === 1 ? "" : "s"}.`,
+        "ok");
+    } catch (e) {
+      setStatus($("#alertStatus"),
+        "Posted on the site, but the notification failed: " + (e.message || e), "err");
+    }
+
+    input.value = "";
+    await loadActive();
+  } catch (e) {
+    setStatus($("#alertStatus"), "Failed: " + (e.message || e), "err");
+  } finally {
+    renderQuickSay();
+    // Re-enable once the cooldown lapses, without a ticker running forever.
+    setTimeout(renderQuickSay, cooldownMs() + 200);
   }
 }
 
@@ -1023,6 +1126,11 @@ function boot() {
   $("#postBtn").addEventListener("click", postCallout);
   $("#retryNotifyBtn").addEventListener("click", retryNotify);
   $("#notifyCheck").addEventListener("change", syncPostButton);
+  $("#quickSayBtn").addEventListener("click", onQuickSay);
+  $("#quickSayInput").addEventListener("input", renderQuickSay);
+  $("#quickSayInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !$("#quickSayBtn").disabled) onQuickSay();
+  });
   $("#reloadBtn").addEventListener("click", loadActive);
   $("#clearBtn").addEventListener("click", () => {
     state.names = [];

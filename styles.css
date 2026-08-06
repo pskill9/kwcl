@@ -715,3 +715,19 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 0 20px 40px; }
 .btn-alert.confirm { background: rgba(208,59,59,0.20); border-color: var(--critical); }
 .btn-alert[disabled] { opacity: .45; cursor: default; background: none; }
 .alert-hint { font-size: 13px; color: var(--ink-mute); }
+
+/* ---------- admin: quick announce ---------- */
+/* Its own row under the one-tap buttons: it needs a text field, and sitting it
+   beside them would make the bare buttons look like they take input too. */
+.quick-say {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--grid);
+}
+.quick-say input {
+  flex: 1 1 320px; min-width: 0;
+  font-family: var(--font-body); font-size: 14px; padding: 9px 12px;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--ring);
+}
+.quick-say input:focus { outline: none; border-color: var(--taegeuk-blue); }
+.quick-say .btn-alert { border-color: var(--taegeuk-blue); background: rgba(48,105,201,0.16); }
+.quick-say .btn-alert:hover { background: rgba(48,105,201,0.28); }
