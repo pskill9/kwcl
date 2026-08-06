@@ -118,6 +118,7 @@ const state = {
   compare: [],               // selected names
   compareMode: "power",      // "power" | "indexed"
   allianceRange: "ALL",
+  projectDays: 0,        // 0 = projection off
   moversRange: "7D",
   rosterSort: { key: "rank", dir: "asc" },
   dossierName: null,
@@ -206,9 +207,14 @@ async function fetchJson(url, timeoutMs = 30000, retries = 1) {
 function readCache() {
   try {
     const raw = JSON.parse(localStorage.getItem(CACHE_KEY));
-    if (raw && raw.days) return { days: raw.days, hof: raw.hof || null, shoutouts: raw.shoutouts || null };
+    if (raw && raw.days) {
+      return {
+        days: raw.days, hof: raw.hof || null, shoutouts: raw.shoutouts || null,
+        fullAt: Number(raw.fullAt) || 0,
+      };
+    }
   } catch (_) { /* unparseable — treat as empty */ }
-  return { days: {}, hof: null, shoutouts: null };
+  return { days: {}, hof: null, shoutouts: null, fullAt: 0 };
 }
 
 /* The snapshot, hall-of-fame and shoutout loaders run concurrently and all
@@ -221,6 +227,7 @@ function saveCache(part) {
       days: part.days || cur.days,
       hof: part.hof === undefined ? cur.hof : part.hof,
       shoutouts: part.shoutouts === undefined ? cur.shoutouts : part.shoutouts,
+      fullAt: part.fullAt === undefined ? cur.fullAt : part.fullAt,
     }));
     localStorage.removeItem(CACHE_KEY_V2);   // dead weight once v3 is written
   } catch (_) { /* storage full — skip caching */ }
@@ -257,21 +264,38 @@ function snapshotsFromBulk(bulk) {
   }));
 }
 
+/* How long the incremental path is trusted before a full re-read. */
+const FULL_REFRESH_MS = 24 * 3600 * 1000;
+
 async function loadLive(base) {
   // Fast path: ask only for days newer than what's already cached, in one call.
-  const cached = readCache().days;
+  const cache = readCache();
   const byDate = {};
-  for (const d of Object.values(cached)) if (d && d.date && Array.isArray(d.rows)) byDate[d.date] = d;
+  for (const d of Object.values(cache.days)) if (d && d.date && Array.isArray(d.rows)) byDate[d.date] = d;
   const newest = Object.keys(byDate).sort().pop() || null;
 
-  const bulk = await loadBulk(base, newest);
+  /* `since` is derived from the NEWEST cached day, which quietly assumes the
+     cache is complete for everything older. It is not always: a first load
+     that partly failed leaves a cache short at the OLD end, and from then on
+     every visit asks only for days after the newest one — so the missing
+     history is never requested again and the chart stays truncated forever.
+     Seen in the wild: a cache holding 6 days while the sheet had 15.
+
+     So the incremental path is trusted for a day at a time, and once a day the
+     whole range is re-read. That is one full call per visitor per day, which
+     is what a first-time visitor pays anyway, and it makes a damaged cache
+     repair itself instead of needing the visitor to know to clear it. */
+  const stale = !cache.fullAt || (Date.now() - cache.fullAt) > FULL_REFRESH_MS;
+  const since = stale ? null : newest;
+
+  const bulk = await loadBulk(base, since);
   if (bulk) {
     // `since` is inclusive, so the newest cached day comes back refreshed
     for (const s of snapshotsFromBulk(bulk)) byDate[s.date] = { date: s.date, rows: s.rows };
     const all = Object.keys(byDate).sort().slice(-MAX_SNAPSHOTS).map((d) => byDate[d]);
     const days = {};
     for (const d of all) days[d.date] = d;
-    saveCache({ days });
+    saveCache(stale ? { days, fullAt: Date.now() } : { days });
     return all.map((d) => ({ date: d.date, rows: d.rows }));
   }
 
@@ -743,12 +767,19 @@ function lineChart(container, opts) {
   const {
     dates, series, height = 260, yFmt = fmtPower,
     invert = false, area = false, startIdx = 0, integerTicks = false,
+    projection = null,
   } = opts;
   container.innerHTML = "";
 
-  const ds = dates.slice(startIdx);
+  const hist = dates.slice(startIdx);
   const sr = series.map((s) => ({ ...s, values: s.values.slice(startIdx) }));
-  if (ds.length < 2) {
+  // The projection shares one x axis with the history, so future dates are
+  // appended here and the split index remembered for everything that has to
+  // treat the two halves differently.
+  const proj = projection && projection.dates && projection.dates.length ? projection : null;
+  const ds = proj ? hist.concat(proj.dates) : hist;
+  const splitIdx = hist.length - 1;
+  if (hist.length < 2) {
     container.appendChild(el("div", "chart-empty", STR("needTwo")));
     return;
   }
@@ -758,6 +789,10 @@ function lineChart(container, opts) {
 
   let mn = Infinity, mx = -Infinity;
   for (const s of sr) for (const v of s.values) if (v != null) { mn = Math.min(mn, v); mx = Math.max(mx, v); }
+  if (proj) {
+    for (const v of proj.lo) if (v != null) mn = Math.min(mn, v);
+    for (const v of proj.hi) if (v != null) mx = Math.max(mx, v);
+  }
   if (!isFinite(mn)) { container.appendChild(el("div", "chart-empty", "No data in this range.")); return; }
   const padV = (mx - mn) * 0.08 || mx * 0.05 || 1;
   mn -= padV; mx += padV;
@@ -792,6 +827,44 @@ function lineChart(container, opts) {
     lbl.textContent = fmtDate(ds[i]);
   }
   S("line", { x1: PAD.l, x2: PAD.l + iw, y1: PAD.t + ih, y2: PAD.t + ih, stroke: INK.baseline, "stroke-width": 1 });
+
+  // Projection sits UNDER the real series: history is the fact, this is the
+  // inference, and the drawing order should say so.
+  if (proj) {
+    const pts = proj.values.map((v, k) => [x(splitIdx + 1 + k), y(v)]);
+    const loPts = proj.lo.map((v, k) => [x(splitIdx + 1 + k), y(v)]);
+    const hiPts = proj.hi.map((v, k) => [x(splitIdx + 1 + k), y(v)]);
+
+    // Anchor everything at the last real reading so the band opens from a
+    // point rather than appearing out of nowhere a day later.
+    const lastV = sr[0].values[sr[0].values.length - 1];
+    const anchor = [x(splitIdx), y(lastV)];
+
+    const bandD =
+      "M" + [anchor, ...hiPts].map((p) => p[0].toFixed(1) + "," + p[1].toFixed(1)).join("L") +
+      "L" + [...loPts].reverse().map((p) => p[0].toFixed(1) + "," + p[1].toFixed(1)).join("L") +
+      "Z";
+    S("path", { d: bandD, fill: SERIES[0], opacity: 0.10 });
+
+    S("path", {
+      d: "M" + [anchor, ...pts].map((p) => p[0].toFixed(1) + "," + p[1].toFixed(1)).join("L"),
+      fill: "none", stroke: SERIES[0], "stroke-width": 2,
+      "stroke-dasharray": "5 4", opacity: 0.85,
+      "stroke-linejoin": "round", "stroke-linecap": "round",
+    });
+
+    // Where measurement stops and arithmetic starts.
+    S("line", {
+      x1: x(splitIdx), x2: x(splitIdx), y1: PAD.t, y2: PAD.t + ih,
+      stroke: INK.mute, "stroke-width": 1, "stroke-dasharray": "2 4", opacity: 0.7,
+    });
+    const now = S("text", {
+      x: x(splitIdx) - 6, y: PAD.t + 11, "text-anchor": "end",
+      fill: INK.mute, "font-size": 10.5, "font-family": "Rajdhani, sans-serif",
+      "font-weight": 700, "letter-spacing": "1",
+    });
+    now.textContent = "NOW";
+  }
 
   // series paths (gaps preserved)
   sr.forEach((s) => {
@@ -836,7 +909,36 @@ function lineChart(container, opts) {
 
     const t = tip();
     t.innerHTML = "";
-    t.appendChild(el("div", "tip-date", state.source === "demo" ? ds[i] + " (demo)" : ds[i]));
+    const projected = proj && i > splitIdx;
+    t.appendChild(el("div", "tip-date",
+      projected ? ds[i] + " · projected"
+                : (state.source === "demo" ? ds[i] + " (demo)" : ds[i])));
+
+    if (projected) {
+      const k = i - splitIdx - 1;
+      const row = el("div", "tip-row");
+      const sw = el("span", "swatch"); sw.style.background = SERIES[0]; sw.style.opacity = "0.6";
+      row.appendChild(sw);
+      row.appendChild(el("span", null, "Projected"));
+      row.appendChild(el("span", "val", yFmt(proj.values[k])));
+      t.appendChild(row);
+      // The range is the point. Showing a single projected number without it
+      // would restate the false precision the band exists to avoid.
+      const rng = el("div", "tip-row");
+      rng.appendChild(el("span", "swatch"));
+      rng.appendChild(el("span", null, "Range"));
+      rng.appendChild(el("span", "val", yFmt(proj.lo[k]) + " – " + yFmt(proj.hi[k])));
+      t.appendChild(rng);
+      dots.forEach((d) => d.setAttribute("opacity", 0));
+      t.classList.remove("hidden");
+      const tw0 = t.offsetWidth, th0 = t.offsetHeight;
+      let tx0 = clientX + 14, ty0 = clientY - th0 - 10;
+      if (tx0 + tw0 > innerWidth - 8) tx0 = clientX - tw0 - 14;
+      if (ty0 < 8) ty0 = clientY + 16;
+      t.style.left = tx0 + "px"; t.style.top = ty0 + "px";
+      return;
+    }
+
     sr.forEach((s, si) => {
       const v = s.values[i];
       if (v == null) { dots[si].setAttribute("opacity", 0); return; }
@@ -945,9 +1047,184 @@ function renderHero() {
   }
 }
 
+/* ==================================================== power projection
+
+   A least-squares fit over recent daily totals, extended forward with a
+   prediction interval.
+
+   Two things this deliberately does NOT do. It does not fit a curve — with a
+   fortnight of data any curve can be made to look convincing, and an alliance
+   that adds members in steps is not smooth anyway. And it does not draw a bare
+   line: the band comes from the fit's own residuals, so a noisy fortnight
+   produces a visibly uncertain projection instead of a confident-looking one.
+   ============================================================================ */
+
+function projectionCfg() {
+  return CFG.projection || {};
+}
+
+/** Days between two ISO dates. Uses real dates, so a missed day is a gap. */
+function dayOffset(fromIso, toIso) {
+  return Math.round((Date.parse(toIso) - Date.parse(fromIso)) / 86400000);
+}
+
+/**
+ * Least-squares fit of total power against day offset, plus a prediction
+ * interval. Returns null when there is not enough to say anything honest.
+ */
+function fitPower(dates, totals, windowDays) {
+  /* Skip incomplete snapshots.
+
+     A day where the scrape captured 11 of 100 commanders is not a day the
+     alliance was weak — it is a day the measurement failed. Left in, the jump
+     back to a full roster reads as explosive growth: on this data it turned
+     118M/day into 781M/day, a 6.6x overstatement pointing at a number the
+     alliance will never hit.
+
+     Judged against the fullest roster seen, not the latest, so one bad scrape
+     today cannot drag the threshold down and admit every other bad day. */
+  const counts = state.alliance.map((a) => (a && a.count) || 0);
+  const fullest = Math.max(0, ...counts);
+  const minShare = Number(projectionCfg().minCompleteness);
+  const floor = fullest * (minShare > 0 && minShare <= 1 ? minShare : 0.8);
+
+  const pts = [];
+  let skipped = 0;
+  for (let i = 0; i < dates.length; i++) {
+    const v = totals[i];
+    if (v == null || !isFinite(v)) continue;
+    if (fullest > 0 && counts[i] < floor) { skipped++; continue; }
+    pts.push({ t: dayOffset(dates[0], dates[i]), v });
+  }
+  if (!pts.length) return null;
+
+  const lastT = pts[pts.length - 1].t;
+  const win = Number(windowDays) > 0
+    ? pts.filter((p) => p.t > lastT - Number(windowDays))
+    : pts;
+
+  const n = win.length;
+  if (n < Math.max(3, Number(projectionCfg().minPoints) || 5)) return null;
+
+  const mt = win.reduce((a, p) => a + p.t, 0) / n;
+  const mv = win.reduce((a, p) => a + p.v, 0) / n;
+  let sxx = 0, sxy = 0;
+  for (const p of win) { sxx += (p.t - mt) ** 2; sxy += (p.t - mt) * (p.v - mv); }
+  if (sxx === 0) return null;                       // every point on one day
+
+  const slope = sxy / sxx;                          // power per day
+  const intercept = mv - slope * mt;
+
+  // Residual standard error. n-2 because two parameters were estimated; with
+  // n === 2 the fit is exact and says nothing about spread, so refuse.
+  if (n < 3) return null;
+  let ss = 0;
+  for (const p of win) ss += (p.v - (intercept + slope * p.t)) ** 2;
+  const se = Math.sqrt(ss / (n - 2));
+
+  // ~80% two-sided. A t table would be more correct for small n; this is the
+  // normal approximation, and the band is already wide enough that the
+  // difference does not change any decision anyone makes from this chart.
+  const z = Number(projectionCfg().confidence) >= 0.95 ? 1.96 : 1.282;
+
+  return {
+    n, slope, intercept, se, z, mt, sxx, lastT, skipped,
+    at(t) { return this.intercept + this.slope * t; },
+    // Standard prediction interval: wider than the confidence interval on the
+    // mean, because it has to cover one future observation rather than the
+    // average of many.
+    marginAt(t) {
+      return this.z * this.se * Math.sqrt(1 + 1 / this.n + ((t - this.mt) ** 2) / this.sxx);
+    },
+  };
+}
+
+/** Future dates + fitted values + band, ready to hand to lineChart. */
+function projectPower(days) {
+  const cfg = projectionCfg();
+  if (!cfg.enabled || !days) return null;
+
+  const dates = state.dates;
+  const totals = state.alliance.map((a) => a.total);
+  const fit = fitPower(dates, totals, cfg.windowDays);
+  if (!fit) return null;
+
+  const last = dates[dates.length - 1];
+  const out = { dates: [], values: [], lo: [], hi: [], fit };
+  for (let d = 1; d <= days; d++) {
+    const t = fit.lastT + d;
+    const v = fit.at(t);
+    const m = fit.marginAt(t);
+    const iso = new Date(Date.parse(last) + d * 86400000).toISOString().slice(0, 10);
+    out.dates.push(iso);
+    out.values.push(v);
+    out.lo.push(Math.max(0, v - m));
+    out.hi.push(v + m);
+  }
+  return out;
+}
+
 function renderAllianceChart() {
   const opts = ["7D", "30D", "ALL"];
   segTabs($("#allianceRange"), opts, state.allianceRange, (o) => { state.allianceRange = o; renderAllianceChart(); });
+
+  const cfg = projectionCfg();
+  const note = $("#projNote");
+  const tabsBox = $("#allianceProject");
+
+  // The toggle only exists when a projection could be honest. Offering it on
+  // three days of history and then refusing to draw anything would be worse
+  // than not offering it.
+  const horizons = (cfg.horizons || []).map(Number).filter((d) => d > 0);
+  const maxH = Number(cfg.maxHorizon) > 0 ? Number(cfg.maxHorizon) : 180;
+  const canProject = cfg.enabled && !!projectPower(horizons[0] || 7);
+  const custom = $("#projCustom");
+  const daysInput = $("#projDaysInput");
+
+  if (tabsBox) {
+    if (!canProject) {
+      tabsBox.innerHTML = "";
+      if (custom) custom.classList.add("hidden");
+      state.projectDays = 0;
+    } else {
+      const labels = ["OFF", ...horizons.map((d) => "+" + d + "D")];
+      // A typed horizon that happens to equal a preset should light that
+      // preset up rather than leaving every tab looking unselected.
+      const current = state.projectDays && horizons.includes(state.projectDays)
+        ? "+" + state.projectDays + "D"
+        : (state.projectDays ? "" : "OFF");
+      segTabs(tabsBox, labels, current, (o) => {
+        state.projectDays = o === "OFF" ? 0 : Number(String(o).replace(/\D/g, ""));
+        renderAllianceChart();
+      });
+
+      if (custom && daysInput) {
+        custom.classList.remove("hidden");
+        daysInput.max = String(maxH);
+        // Only rewrite the field when it is not being typed in, or the cursor
+        // jumps to the end on every keystroke.
+        if (document.activeElement !== daysInput) {
+          daysInput.value = state.projectDays ? String(state.projectDays) : "";
+        }
+        daysInput.placeholder = String(horizons[0] || 7);
+        if (!daysInput.dataset.wired) {
+          daysInput.dataset.wired = "1";
+          daysInput.addEventListener("input", () => {
+            const raw = daysInput.value.trim();
+            if (!raw) { state.projectDays = 0; renderAllianceChart(); return; }
+            let d = Math.floor(Number(raw));
+            if (!isFinite(d) || d < 1) return;      // mid-typing, leave it alone
+            if (d > maxH) { d = maxH; daysInput.value = String(maxH); }
+            state.projectDays = d;
+            renderAllianceChart();
+          });
+        }
+      }
+    }
+  }
+
+  const proj = state.projectDays ? projectPower(state.projectDays) : null;
+
   const startIdx = state.allianceRange === "ALL" ? 0 : idxDaysAgo(WINDOWS[state.allianceRange]);
   lineChart($("#allianceChart"), {
     dates: state.dates,
@@ -955,7 +1232,28 @@ function renderAllianceChart() {
     series: [{ name: "Alliance power", color: SERIES[0], values: state.alliance.map((a) => a.total), endLabel: false }],
     area: true,
     height: 280,
+    projection: proj,
   });
+
+  if (note) {
+    if (!proj) { note.classList.add("hidden"); note.textContent = ""; }
+    else {
+      const f = proj.fit;
+      const end = proj.values[proj.values.length - 1];
+      const lo = proj.lo[proj.lo.length - 1], hi = proj.hi[proj.hi.length - 1];
+      // Say what it was fitted from. A projection whose basis is invisible
+      // invites more trust than it has earned.
+      const win = Number(cfg.windowDays) > 0 ? ` in the last ${cfg.windowDays} days` : "";
+      note.textContent =
+        `Projected from ${f.n} snapshot${f.n === 1 ? "" : "s"}${win} — ` +
+        `${fmtPower(f.slope)} a day on average. In ${state.projectDays} days: ` +
+        `${fmtPower(end)} (range ${fmtPower(lo)} – ${fmtPower(hi)}).` +
+        (f.skipped
+          ? ` ${f.skipped} incomplete snapshot${f.skipped === 1 ? "" : "s"} ignored.`
+          : "");
+      note.classList.remove("hidden");
+    }
+  }
 }
 
 /* Commanders whose first-ever snapshot is the newest one — i.e. they appeared

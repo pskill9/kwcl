@@ -80,9 +80,18 @@
     <div class="panel">
       <div class="panel-head">
         <h2 id="allianceChartTitle">Alliance total power</h2>
-        <div class="seg-tabs" id="allianceRange" role="tablist" aria-label="Time range"></div>
+        <div class="head-controls">
+          <div class="seg-tabs" id="allianceProject" role="tablist" aria-label="Projection"></div>
+          <label class="proj-custom hidden" id="projCustom">
+            <input type="number" id="projDaysInput" min="1" step="1"
+                   inputmode="numeric" aria-label="Days to project">
+            <span>d</span>
+          </label>
+          <div class="seg-tabs" id="allianceRange" role="tablist" aria-label="Time range"></div>
+        </div>
       </div>
       <div class="chart" id="allianceChart"></div>
+      <p class="proj-note hidden" id="projNote"></p>
     </div>
   </section>
 

@@ -181,6 +181,46 @@ delivery can be proved with nothing deployed. `--via relay` routes through
 `script.googleusercontent.com`, and `curl -L` returns a Drive "Page Not Found"
 page with a 404 for a request that actually succeeded.
 
+### Power projection (optional)
+
+The alliance chart can extend forward: a least-squares fit over recent daily
+totals, drawn as a dashed line with a prediction interval around it.
+`OFF / +7D / +30D` next to the range tabs, plus a box for any number of days.
+Off by default.
+
+The band is not decoration. A projection drawn as a bare line states a
+confidence the data does not support — the band comes from the fit's own
+residuals, so a noisy fortnight produces a visibly uncertain projection instead
+of a confident-looking one, and it widens the further out it goes.
+
+It deliberately does not fit a curve. With a few weeks of data any curve can be
+made to look convincing, and an alliance that gains members in steps is not
+smooth anyway.
+
+Everything is in `config.js` under `projection`:
+
+- `windowDays` — history the fit reads. 30 smooths out a quiet weekend; shorter
+  reacts faster to a real change in trajectory but chases noise.
+- `minPoints` — below this the toggle does not appear at all, because a trend
+  through three points is theatre.
+- `minCompleteness` — a snapshot holding less than this share of the fullest
+  roster ever seen is treated as a failed scrape and left out, with the note
+  saying how many were ignored.
+- `maxHorizon` — the typed box clamps here.
+
+### A note on the snapshot cache
+
+Past days are cached in localStorage and only newer ones are fetched. That
+assumes the cache is complete for everything older, which is not always true: a
+first load that partly fails leaves a cache short at the OLD end, and since
+`since` is derived from the NEWEST cached day, the missing history is never
+requested again. The chart then stays truncated forever with nothing to
+indicate why.
+
+So the incremental path is trusted for 24 hours at a time and the whole range
+is re-read once a day. That is one full call per visitor per day — what a
+first-time visitor pays anyway — and it lets a damaged cache repair itself.
+
 ### Quick alerts (optional)
 
 One tap in `admin.html` posts a short-lived marker to the top of the HQ page

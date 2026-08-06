@@ -90,6 +90,34 @@ window.ALLIANCE_CONFIG = {
     },
   ],
 
+  /* Power projection on the alliance chart.
+
+     A least-squares fit over the last `windowDays` of total power, drawn
+     forward as a dashed line with a prediction interval around it.
+
+     The band is not decoration. With a fortnight of daily snapshots a
+     thirty-day projection is a guess, and drawing a bare line would state it
+     with a confidence the data does not support. The band is computed from the
+     fit's own residuals, so it widens honestly the further out it goes and
+     stays wide while the history is short.
+
+     `minPoints` is the refusal threshold: below it the toggle does not appear
+     at all, because a trend drawn through three points is theatre. */
+  projection: {
+    enabled: true,
+    /* History the fit reads. 30 days smooths out a bad scrape or a quiet
+       weekend; a shorter window reacts faster to a real change in trajectory
+       but chases noise. 0 = use everything held. */
+    windowDays: 30,
+    horizons: [7, 30],     // one-click options; any number can be typed too
+    maxHorizon: 180,       // beyond this the band is wider than the answer
+    minPoints: 5,
+    /* A snapshot holding fewer than this share of the fullest roster ever seen
+       is treated as a failed scrape and left out of the fit. */
+    minCompleteness: 0.8,
+    confidence: 0.80,      // width of the band
+  },
+
   /* Quick announce — type a line, send it to everyone.
 
      The composer already does this properly, with templates, commanders,

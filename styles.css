@@ -731,3 +731,32 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 0 20px 40px; }
 .quick-say input:focus { outline: none; border-color: var(--taegeuk-blue); }
 .quick-say .btn-alert { border-color: var(--taegeuk-blue); background: rgba(48,105,201,0.16); }
 .quick-say .btn-alert:hover { background: rgba(48,105,201,0.28); }
+
+/* ---------- chart projection ---------- */
+.head-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+.proj-note {
+  margin: 4px 14px 12px;
+  font-size: 12.5px; line-height: 1.5; color: var(--ink-mute);
+  font-variant-numeric: tabular-nums;
+}
+
+/* custom projection horizon */
+.proj-custom {
+  display: inline-flex; align-items: center; gap: 4px;
+  border: 1px solid var(--ring); background: var(--surface); padding: 0 7px 0 2px;
+}
+.proj-custom input {
+  width: 46px; padding: 4px 2px 4px 6px;
+  font-family: var(--font-num); font-weight: 600; font-size: 12px;
+  background: none; color: var(--ink); border: 0; outline: none;
+  font-variant-numeric: tabular-nums;
+}
+.proj-custom input::-webkit-outer-spin-button,
+.proj-custom input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.proj-custom input[type=number] { -moz-appearance: textfield; }
+.proj-custom span {
+  font-family: var(--font-num); font-weight: 600; font-size: 11px;
+  color: var(--ink-mute); letter-spacing: 1px;
+}
+.proj-custom:focus-within { border-color: var(--taegeuk-blue); }
