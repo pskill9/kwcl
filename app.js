@@ -97,11 +97,13 @@ const FETCH_CONCURRENCY = 6;
 // Bump this whenever past snapshots are edited in the sheet (e.g. commander
 // names corrected). Historical days are served from cache and never refetched,
 // so a new key is what forces every visitor to pick the corrections up.
-// v3 stores { days: { sheetName: {date, rows} }, hof: [...] }. v2 held rows
+// v4 stores { days: { sheetName: {date, rows} }, hof: [...] }. v2 held rows
 // only, with dates supplied by the ?action=sheets response — which is exactly
 // what the first paint must not wait for, hence the date living in the cache.
-const CACHE_KEY = "kwcl_cache_v3";
-const CACHE_KEY_V2 = "kwcl_cache_v2";
+// v4: 멍뭉뇽냥 and 비닐봉달 were renamed to 멍냥Nyang and VINYLBONGㅈ across
+// every past day, so every cached snapshot holds the superseded names.
+const CACHE_KEY = "kwcl_cache_v4";
+const CACHE_KEY_PREV = "kwcl_cache_v3";
 const API_KEY = "kwcl_api_url";
 const COMPARE_MAX = 6;
 
@@ -229,7 +231,7 @@ function saveCache(part) {
       shoutouts: part.shoutouts === undefined ? cur.shoutouts : part.shoutouts,
       fullAt: part.fullAt === undefined ? cur.fullAt : part.fullAt,
     }));
-    localStorage.removeItem(CACHE_KEY_V2);   // dead weight once v3 is written
+    localStorage.removeItem(CACHE_KEY_PREV);   // dead weight once v4 is written
   } catch (_) { /* storage full — skip caching */ }
 }
 
