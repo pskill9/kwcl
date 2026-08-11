@@ -3,9 +3,9 @@
 
    Posts short, time-limited callouts through the password-guarded endpoint in
    Code.gs. The password is never stored in this file or in the repo: it is
-   typed here, held in sessionStorage for the tab's lifetime, and verified
-   server-side against the CALLOUT_SECRET script property. This page is only a
-   convenience — it cannot grant access it does not have.
+   typed here, kept in the browser's own storage, and verified server-side
+   against the CALLOUT_SECRET script property. This page is only a convenience
+   — it cannot grant access it does not have.
    ============================================================ */
 
 const CFG = Object.assign(
@@ -30,6 +30,45 @@ function getApiUrl() {
   const p = new URLSearchParams(location.search).get("api");
   if (p) { try { localStorage.setItem(API_KEY, p); } catch (_) {} return p; }
   try { return localStorage.getItem(API_KEY) || CFG.apiUrl; } catch (_) { return CFG.apiUrl; }
+}
+
+/* ------------------------------------------------------------ the session
+
+   The password lives in localStorage, not sessionStorage. A per-tab secret
+   meant retyping it on every visit: this page is opened from a phone home
+   screen and from a laptop bookmark, and each of those is a fresh tab.
+
+   The trade is that the secret now outlives the tab, so two things bound it —
+   the lock button in the header, and any "unauthorized" answer from Code.gs,
+   which drops the stored copy on the spot rather than leaving a dead session
+   sitting behind an UNLOCKED pill.
+   ---------------------------------------------------------------------- */
+
+function loadPw() {
+  try {
+    const saved = localStorage.getItem(PW_KEY);
+    if (saved) return saved;
+    // A tab unlocked before this page moved to localStorage: carry it over
+    // once so the switch does not cost the one person mid-session a retype.
+    const legacy = sessionStorage.getItem(PW_KEY);
+    if (legacy) {
+      localStorage.setItem(PW_KEY, legacy);
+      sessionStorage.removeItem(PW_KEY);
+      return legacy;
+    }
+  } catch (_) {}
+  return "";
+}
+
+function savePw(pw) {
+  try { localStorage.setItem(PW_KEY, pw); } catch (_) {}
+}
+
+function clearPw() {
+  try {
+    localStorage.removeItem(PW_KEY);
+    sessionStorage.removeItem(PW_KEY);
+  } catch (_) {}
 }
 
 const API = (getApiUrl() || "").replace(/\/+$/, "");
@@ -416,7 +455,7 @@ async function unlock() {
       return;
     }
     state.password = pw;
-    try { sessionStorage.setItem(PW_KEY, pw); } catch (_) {}
+    savePw(pw);
     enterAdmin();
   } catch (e) {
     // surface the real reason — a bare "could not reach" hid HTTP 405/404
@@ -426,18 +465,66 @@ async function unlock() {
 
 function enterAdmin() {
   // Belongs here, not at the call site: enterAdmin has two callers — typing
-  // the password, and restoring it from sessionStorage on a revisit. Wiring
-  // this into only the first left every returning admin with a blank count
-  // and a Post button that never restated the notify choice.
+  // the password, and restoring it from storage on a revisit. Wiring this into
+  // only the first left every returning admin with a blank count and a Post
+  // button that never restated the notify choice.
+  //
+  // It doubles as the check on a restored session. refreshNotifyCount already
+  // posts push_list with the stored secret, and Code.gs answers a bad one with
+  // "unauthorized" — so a stale password is caught on load, for free, without
+  // the extra callout_check that would put a login line in Admin Log on every
+  // single revisit.
   refreshNotifyCount();
   renderAlertUi();
   $("#lockSection").classList.add("hidden");
   $("#composeSection").classList.remove("hidden");
   $("#activeSection").classList.remove("hidden");
+  const lockBtn = $("#lockBtn");
+  if (lockBtn) lockBtn.classList.remove("hidden");
   $("#dataPill").textContent = "UNLOCKED";
   $("#dataPill").classList.add("live");
   renderPreview();
   loadActive();
+}
+
+/**
+ * End the session and go back to the lock screen.
+ *
+ * The one way out, and the only thing that erases the stored password. Called
+ * by the lock button, and by every refusal Code.gs marks "unauthorized" — once
+ * the password can outlive the tab, a password that has since been changed on
+ * the server must not keep presenting an unlocked page.
+ */
+function lockOut(msg) {
+  state.password = "";
+  clearPw();
+  if (alertTick) { clearInterval(alertTick); alertTick = null; }
+  $("#composeSection").classList.add("hidden");
+  $("#activeSection").classList.add("hidden");
+  const alerts = $("#alertSection");
+  if (alerts) alerts.classList.add("hidden");
+  const lockBtn = $("#lockBtn");
+  if (lockBtn) lockBtn.classList.add("hidden");
+  $("#lockSection").classList.remove("hidden");
+  $("#dataPill").textContent = "LOCKED";
+  $("#dataPill").classList.remove("live");
+  $("#pwInput").value = "";
+  setStatus($("#lockStatus"), msg || "", msg ? "err" : "");
+  $("#pwInput").focus();
+}
+
+/**
+ * Report a refusal from Code.gs, ending the session if it was the password.
+ *
+ * Shared by every write so a rejected password locks the whole page, rather
+ * than only the one panel that happened to make the failing call.
+ */
+function showRefusal(node, res) {
+  if (res.error === "unauthorized") {
+    lockOut("That password is no longer accepted. Please enter it again.");
+    return;
+  }
+  setStatus(node, "Refused: " + res.error, "err");
 }
 
 /* ==================================================== push notifications
@@ -659,8 +746,7 @@ async function onAlertClick(a) {
     });
 
     if (!res.ok) {
-      setStatus($("#alertStatus"),
-        res.error === "unauthorized" ? "Password rejected." : ("Refused: " + res.error), "err");
+      showRefusal($("#alertStatus"), res);
       return;
     }
 
@@ -762,8 +848,7 @@ async function onQuickSay() {
     });
 
     if (!res.ok) {
-      setStatus($("#alertStatus"),
-        res.error === "unauthorized" ? "Password rejected." : ("Refused: " + res.error), "err");
+      showRefusal($("#alertStatus"), res);
       return;
     }
 
@@ -818,6 +903,13 @@ async function refreshNotifyCount() {
   try {
     const res = await pushPost({ action: "push_list", secret: state.password },
                                (r) => typeof r.count === "number");
+    // The one call every unlock makes anyway, so it is where a restored-but-
+    // stale password surfaces. Silently showing "nobody has subscribed yet"
+    // for a session that is not actually authorised would be a lie.
+    if (res && res.error === "unauthorized") {
+      lockOut("That password is no longer accepted. Please enter it again.");
+      return;
+    }
     const n = res && res.ok ? res.count : 0;
     state.subCount = n;
     label.textContent = n === 0 ? "— nobody has subscribed yet"
@@ -997,7 +1089,7 @@ async function postCallout() {
       return !!hit;
     });
     if (!res.ok) {
-      setStatus($("#postStatus"), res.error === "unauthorized" ? "Password rejected." : ("Refused: " + res.error), "err");
+      showRefusal($("#postStatus"), res);
       return;
     }
     // The callout is written and verified. Only now does the push go out, and
@@ -1055,7 +1147,7 @@ async function removeCallout(c, btn) {
         const exp = row ? calloutExpiry(row.Expires) : null;
         return exp !== null && exp <= Date.now();
       });
-    if (!res.ok) { btn.disabled = false; btn.textContent = "Remove now"; setStatus($("#postStatus"), "Refused: " + res.error, "err"); return; }
+    if (!res.ok) { btn.disabled = false; btn.textContent = "Remove now"; showRefusal($("#postStatus"), res); return; }
     await loadActive();
   } catch (e) {
     btn.disabled = false; btn.textContent = "Remove now";
@@ -1120,6 +1212,7 @@ function boot() {
   renderRosterGrid("");
 
   $("#unlockBtn").addEventListener("click", unlock);
+  $("#lockBtn").addEventListener("click", () => lockOut("Locked. Enter the password to get back in."));
   $("#pwInput").addEventListener("keydown", (e) => { if (e.key === "Enter") unlock(); });
   $("#templateSelect").addEventListener("change", applyTemplate);
   $("#messageInput").addEventListener("input", renderPreview);
@@ -1155,9 +1248,10 @@ function boot() {
 
   loadAvatarIndex().then(loadRoster);
 
-  // Same tab, already unlocked — skip the lock screen without re-probing.
-  let saved = "";
-  try { saved = sessionStorage.getItem(PW_KEY) || ""; } catch (_) {}
+  // Already unlocked on this browser, in any tab and across restarts — go
+  // straight in. enterAdmin's own push_list call locks the page back up if the
+  // stored password has stopped working.
+  const saved = loadPw();
   if (saved) { state.password = saved; enterAdmin(); }
 }
 
