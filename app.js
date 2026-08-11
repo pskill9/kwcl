@@ -102,8 +102,11 @@ const FETCH_CONCURRENCY = 6;
 // what the first paint must not wait for, hence the date living in the cache.
 // v4: 멍뭉뇽냥 and 비닐봉달 were renamed to 멍냥Nyang and VINYLBONGㅈ across
 // every past day, so every cached snapshot holds the superseded names.
-const CACHE_KEY = "kwcl_cache_v4";
-const CACHE_KEY_PREV = "kwcl_cache_v3";
+// v5: same again — M A H A was renamed to COLLIE across the Roster and all 19
+// past days on 2026-08-11. Past days are never refetched, so without this bump
+// a returning browser keeps the old name and COLLIE's trend line starts today.
+const CACHE_KEY = "kwcl_cache_v5";
+const CACHE_KEY_PREV = "kwcl_cache_v4";
 const API_KEY = "kwcl_api_url";
 const COMPARE_MAX = 6;
 
