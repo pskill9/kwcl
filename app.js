@@ -105,8 +105,11 @@ const FETCH_CONCURRENCY = 6;
 // v5: same again — M A H A was renamed to COLLIE across the Roster and all 19
 // past days on 2026-08-11. Past days are never refetched, so without this bump
 // a returning browser keeps the old name and COLLIE's trend line starts today.
-const CACHE_KEY = "kwcl_cache_v5";
-const CACHE_KEY_PREV = "kwcl_cache_v4";
+// v6: two more on 2026-08-12 — 292513 became Deux292513, and 룀 was corrected to
+// 룜 after the magnified capture showed the vowel had been misread all along.
+// Both were rewritten across the Roster and all 20 past days holding them.
+const CACHE_KEY = "kwcl_cache_v6";
+const CACHE_KEY_PREV = "kwcl_cache_v5";
 const API_KEY = "kwcl_api_url";
 const COMPARE_MAX = 6;
 
@@ -234,7 +237,7 @@ function saveCache(part) {
       shoutouts: part.shoutouts === undefined ? cur.shoutouts : part.shoutouts,
       fullAt: part.fullAt === undefined ? cur.fullAt : part.fullAt,
     }));
-    localStorage.removeItem(CACHE_KEY_PREV);   // dead weight once v4 is written
+    localStorage.removeItem(CACHE_KEY_PREV);   // dead weight once v6 is written
   } catch (_) { /* storage full — skip caching */ }
 }
 
